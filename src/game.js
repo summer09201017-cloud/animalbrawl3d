@@ -1,0 +1,441 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   毛毛大亂鬥 — 視覺層 + 規則 + AI
+   ═══════════════════════════════════════════════════════════════════════════
+   分工(刻意的):
+     src/physics.js  純 Rapier,**不 import three** ⇒ node 測試驅動真的物理
+     src/game.js     three 場景 + 每幀從物理同步 + 回合規則 + AI(本檔)
+     src/main.js     UI/HUD/輸入(不碰物理)
+   ⇒ 物理與規則的斷言不需要 renderer,所以不會掉進 3d-game-kit 那條
+     「headless 測試永遠綠(沒有 renderer 就 early-return)」的坑。
+   ═══════════════════════════════════════════════════════════════════════════ */
+import * as THREE from 'three';
+import {
+  initPhysics, createWorld, addAnimal, stepWorld, jump, punch, grab, release,
+  respawn, PARTS, SIZE, TUNE,
+} from './physics.js';
+
+/* ── 動物設定(純視覺 + 一句自我介紹)───────────────────────────────────── */
+export const KINDS = {
+  cat: { name: '小貓', fur: 0xf6a94a, belly: 0xffe0b2, ear: 'triangle', tail: 'long', nose: 0xd2694a },
+  dog: { name: '小狗', fur: 0x9c6b4a, belly: 0xf0dcc8, ear: 'floppy', tail: 'stub', nose: 0x3a2a22 },
+  bunny: { name: '小兔', fur: 0xf2f0ee, belly: 0xffffff, ear: 'tall', tail: 'puff', nose: 0xe58fa0 },
+  duck: { name: '小鴨', fur: 0xf7d64a, belly: 0xfff0a8, ear: 'none', tail: 'stub', nose: 0xef8a3c },
+};
+export const KIND_LIST = Object.keys(KINDS);
+
+/* 每位玩家的隊色(HUD 與腳下光圈共用一份 —— 兩份顏色遲早漂移)*/
+export const TEAM = [
+  { key: 'p1', label: '一號', color: 0x4fc3f7, css: '#4fc3f7' },
+  { key: 'p2', label: '二號', color: 0xff8a65, css: '#ff8a65' },
+];
+
+const M = (c, opts = {}) => new THREE.MeshStandardMaterial({
+  color: c, roughness: opts.rough ?? 0.72, metalness: 0,
+  /* 3d-game-kit §1:膚色/毛色要加 emissive,否則臉在光背面完全看不清。*/
+  emissive: opts.emissive ?? new THREE.Color(c).multiplyScalar(0.18),
+  ...opts.extra,
+});
+
+/**
+ * 造一隻動物的視覺體。每個部位一個 Group,對應 physics 的一顆剛體。
+ * ★ 臉部鐵則(3d-game-kit §1,違反必被退件):白眼珠 + 黑瞳孔 + 眉毛 + 微笑弧,四樣都要有。
+ *   ⚠ 而且眼睛要貼**頭的本地 +z**:頭是自由旋轉的剛體,貼錯面的話玩家大部分時間
+ *     看到的是後腦勺,而那不會有任何測試會紅(它只是「看起來沒做完」)。
+ */
+function buildAnimalMesh(kind, teamColor) {
+  const K = KINDS[kind] || KINDS.cat;
+  const fur = M(K.fur), belly = M(K.belly), dark = M(0x2b2b2b, { rough: 0.5 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, emissive: 0x555555 });
+  const g = {};
+
+  // 軀幹
+  const mkBox = (h, mat) => new THREE.Mesh(new THREE.BoxGeometry(h[0] * 2, h[1] * 2, h[2] * 2), mat);
+  g.pelvis = new THREE.Group(); g.pelvis.add(mkBox(SIZE.pelvis, fur));
+  g.chest = new THREE.Group();
+  g.chest.add(mkBox(SIZE.chest, fur));
+  {  // 肚子那一片淺色(可愛感的來源之一)
+    const b = mkBox([SIZE.chest[0] * 0.62, SIZE.chest[1] * 0.7, 0.02], belly);
+    b.position.z = SIZE.chest[2] + 0.005; g.chest.add(b);
+  }
+
+  // 頭 + 臉
+  g.head = new THREE.Group();
+  const R = SIZE.head;
+  g.head.add(new THREE.Mesh(new THREE.SphereGeometry(R, 22, 16), fur));
+  const eye = (sx) => {
+    const e = new THREE.Group();
+    const w = new THREE.Mesh(new THREE.SphereGeometry(R * 0.30, 14, 10), white);
+    const p = new THREE.Mesh(new THREE.SphereGeometry(R * 0.155, 12, 9), dark);
+    p.position.z = R * 0.22;
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(R * 0.44, R * 0.09, R * 0.09), dark);
+    brow.position.set(0, R * 0.40, R * 0.16);
+    brow.rotation.z = sx * -0.22;                       // 兩邊眉毛外八 = 好脾氣
+    e.add(w, p, brow);
+    e.position.set(sx * R * 0.42, R * 0.16, R * 0.76);
+    return e;
+  };
+  g.head.add(eye(-1), eye(1));
+  {  // 鼻子 + 微笑弧(TorusGeometry 半圈)
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(R * 0.17, 12, 9), M(K.nose, { rough: 0.4 }));
+    nose.position.set(0, -R * 0.06, R * 0.96); nose.scale.set(1.25, 0.85, 0.8);
+    const smile = new THREE.Mesh(new THREE.TorusGeometry(R * 0.30, R * 0.045, 8, 18, Math.PI), dark);
+    smile.position.set(0, -R * 0.36, R * 0.82);
+    smile.rotation.z = Math.PI;                          // 開口朝下 = 微笑(朝上會變成哭臉)
+    g.head.add(nose, smile);
+  }
+  // 耳朵(四種造型)
+  const earMat = M(K.fur, { rough: 0.8 });
+  if (K.ear === 'triangle') for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(new THREE.ConeGeometry(R * 0.34, R * 0.6, 4), earMat);
+    e.position.set(sx * R * 0.55, R * 0.85, 0); e.rotation.z = sx * 0.26; g.head.add(e);
+  }
+  if (K.ear === 'tall') for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(new THREE.CapsuleGeometry(R * 0.17, R * 1.05, 6, 10), earMat);
+    e.position.set(sx * R * 0.42, R * 1.15, 0); e.rotation.z = sx * 0.20; g.head.add(e);
+  }
+  if (K.ear === 'floppy') for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(new THREE.CapsuleGeometry(R * 0.20, R * 0.7, 6, 10), earMat);
+    e.position.set(sx * R * 0.80, R * 0.30, 0); e.rotation.z = sx * 1.15; g.head.add(e);
+  }
+  if (K.ear === 'none') {  // 小鴨:改成扁嘴
+    const bill = new THREE.Mesh(new THREE.BoxGeometry(R * 0.66, R * 0.16, R * 0.5), M(K.nose, { rough: 0.5 }));
+    bill.position.set(0, -R * 0.18, R * 0.92); g.head.add(bill);
+  }
+
+  // 四肢
+  const limb = (hh, r, mat) => {
+    const grp = new THREE.Group();
+    grp.add(new THREE.Mesh(new THREE.CapsuleGeometry(r, hh * 2, 6, 10), mat));
+    return grp;
+  };
+  const paw = M(K.belly, { rough: 0.6 });
+  for (const side of ['L', 'R']) {
+    g['arm' + side + '0'] = limb(SIZE.upperArm[0], SIZE.upperArm[1], fur);
+    const lo = limb(SIZE.lowerArm[0], SIZE.lowerArm[1], fur);
+    {  // 手掌:一顆淺色球,才看得出「手」在哪(打人的時候玩家要看得到拳頭)
+      const h = new THREE.Mesh(new THREE.SphereGeometry(SIZE.lowerArm[1] * 1.25, 12, 9), paw);
+      h.position.y = -SIZE.lowerArm[0] - SIZE.lowerArm[1] * 0.4; lo.add(h);
+    }
+    g['arm' + side + '1'] = lo;
+    g['leg' + side + '0'] = limb(SIZE.thigh[0], SIZE.thigh[1], fur);
+    const sh = limb(SIZE.shin[0], SIZE.shin[1], fur);
+    {
+      const f = new THREE.Mesh(new THREE.SphereGeometry(SIZE.shin[1] * 1.3, 12, 9), paw);
+      f.position.y = -SIZE.shin[0] - SIZE.shin[1] * 0.3; f.scale.set(1.1, 0.8, 1.35); sh.add(f);
+    }
+    g['leg' + side + '1'] = sh;
+  }
+  // 尾巴掛在 pelvis
+  if (K.tail === 'long') {
+    const t = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.4, 5, 8), fur);
+    t.position.set(0, 0.05, -SIZE.pelvis[2] - 0.16); t.rotation.x = -1.05; g.pelvis.add(t);
+  } else if (K.tail === 'puff') {
+    const t = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 9), M(K.belly));
+    t.position.set(0, 0.04, -SIZE.pelvis[2] - 0.09); g.pelvis.add(t);
+  } else {
+    const t = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.14, 5, 8), fur);
+    t.position.set(0, 0.10, -SIZE.pelvis[2] - 0.08); t.rotation.x = -0.6; g.pelvis.add(t);
+  }
+  // 隊色領巾(分辨誰是誰 —— 同一種動物對打時這是唯一的線索)
+  {
+    const s = new THREE.Mesh(new THREE.TorusGeometry(SIZE.chest[0] * 0.92, 0.045, 8, 20),
+      M(teamColor, { rough: 0.45 }));
+    s.position.y = SIZE.chest[1] * 0.95; s.rotation.x = Math.PI / 2; g.chest.add(s);
+  }
+  for (const k of PARTS) { g[k].castShadow = true; g[k].traverse(o => { o.castShadow = true; }); }
+  return g;
+}
+
+/* ── 主體 ──────────────────────────────────────────────────────────────── */
+export const VIEWS = [
+  { key: 'chase', name: '跟隨' },
+  { key: 'side', name: '側面轉播' },
+  { key: 'top', name: '高空俯瞰' },
+];
+
+export class Game {
+  constructor(canvas, opts = {}) {
+    this.canvas = canvas;
+    this.opts = opts;
+    this.onEvent = opts.onEvent || (() => { });
+    this.winScore = opts.winScore ?? 3;
+    this.viewIdx = 0;
+    this.state = 'menu';          // menu | fight | roundEnd | matchEnd
+    this.round = 1;
+    this.msg = '';
+    this._camPos = new THREE.Vector3(0, 6, 10);
+    this._camLook = new THREE.Vector3(0, 1, 0);
+    this._camUp = new THREE.Vector3(0, 1, 0);
+    this.roundEndT = 0;
+    /* 🎲 隨機源可注入。AI 用隨機決定何時出手,而 Math.random 讓測試變成 flaky
+       —— 實測 12 次紅 1 次(AI 偶爾自己走下台)。
+       ★ flaky 測試比沒測試更糟:紅一次沒人查、綠一次就以為修好了,
+         而它遲早會在「真的壞了」那一次被當成雜訊放過去。
+       ⇒ 測試傳固定種子的 LCG,遊戲照用 Math.random。*/
+    this.rng = opts.rng || Math.random;
+  }
+
+  async init(cfg = {}) {
+    await initPhysics();
+    this.cfg = {
+      kinds: cfg.kinds || ['cat', 'dog'],
+      ai: cfg.ai ?? [false, true],
+      arenaRadius: cfg.arenaRadius ?? 5.0,
+      winScore: cfg.winScore ?? this.winScore,
+    };
+    this.winScore = this.cfg.winScore;
+    this._buildScene();
+    this._buildWorld();
+    this.state = 'fight';
+    this.msg = '第 1 回合 —— 把對手推下台!';
+    return this;
+  }
+
+  _buildScene() {
+    /* 🧪 headless:node 沒有 WebGL,所以測試傳 headless:true 換一顆**假 renderer**。
+       ★ 這不是為了讓測試好過,是為了讓**視覺層的程式路徑真的被跑到** ——
+         3d-game-kit 的血案(#46 visible 只認嚴格 false)就是因為
+         「沒有 renderer 就整段 early-return ⇒ 測試永遠綠」。
+         這裡只換掉 renderer,場景建構、人物建構、每幀同步、鏡頭、visible 指派
+         全部照跑,所以那一族的錯抓得到。*/
+    if (this.opts.headless) {
+      this.renderer = { setSize() {}, setPixelRatio() {}, render() { this._n = (this._n || 0) + 1; },
+                        shadowMap: {}, _fake: true };
+    } else {
+      const r = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+      r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+      r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.renderer = r;
+    }
+    const s = new THREE.Scene();
+    s.background = new THREE.Color(0x8fd3f4);
+    s.fog = new THREE.Fog(0x8fd3f4, 18, 46);
+    this.scene = s;
+    this.camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
+    s.add(new THREE.HemisphereLight(0xffffff, 0x7a8f5a, 0.85));
+    const sun = new THREE.DirectionalLight(0xfff2d8, 1.15);
+    sun.position.set(7, 13, 6); sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    const d = 9; Object.assign(sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 40 });
+    s.add(sun);
+    // 幾朵雲當背景(浮空台子要有天空感,不然像在真空裡打架)
+    for (let i = 0; i < 14; i++) {
+      const c = new THREE.Mesh(new THREE.SphereGeometry(1.1 + Math.random() * 1.4, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 }));
+      c.position.set((Math.random() - 0.5) * 60, 7 + Math.random() * 12, (Math.random() - 0.5) * 60);
+      c.scale.y = 0.55; s.add(c);
+    }
+  }
+
+  _buildWorld() {
+    const R = this.cfg.arenaRadius;
+    this.W = createWorld({ arenaRadius: R });
+    // 台子
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(R, R * 0.96, 0.5, 48),
+      M(0x7ac36a, { rough: 0.9 }));
+    top.position.y = -0.25; top.receiveShadow = true; this.scene.add(top);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R, 0.09, 8, 60), M(0xf2e6a8, { rough: 0.6 }));
+    rim.rotation.x = Math.PI / 2; this.scene.add(rim);
+    // 台子下方一根柱子(讓「浮空」看起來有理由)
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.35, R * 0.22, 14, 20), M(0x8d6e63));
+    col.position.y = -7.5; this.scene.add(col);
+
+    this.mesh = [];
+    this.rings = [];
+    const n = this.cfg.kinds.length;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2;
+      const at = { x: Math.sin(ang) * R * 0.45, z: Math.cos(ang) * R * 0.45 };
+      const a = addAnimal(this.W, at, this.cfg.kinds[i]);
+      a.facing = Math.atan2(-at.x, -at.z);                 // 一開始面向場中央
+      const g = buildAnimalMesh(this.cfg.kinds[i], TEAM[i % TEAM.length].color);
+      for (const k of PARTS) this.scene.add(g[k]);
+      this.mesh.push(g);
+      // 腳下隊色光圈:兩隻同種動物時唯一分得出誰是誰的東西
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.30, 0.42, 26),
+        new THREE.MeshBasicMaterial({ color: TEAM[i % TEAM.length].color, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2; this.scene.add(ring); this.rings.push(ring);
+    }
+    this.spawns = this.W.animals.map((_, i) => {
+      const ang = (i / n) * Math.PI * 2;
+      return { x: Math.sin(ang) * R * 0.45, z: Math.cos(ang) * R * 0.45 };
+    });
+  }
+
+  /* ── 輸入(main.js 每幀餵進來)───────────────────────────────────────── */
+  /** @param {Array<{dx:number,dz:number}>} moves 每位玩家的移動方向(世界座標) */
+  setMoves(moves) { this._moves = moves; }
+  doJump(i) { const a = this.W?.animals[i]; return a ? jump(this.W, a) : false; }
+  doPunch(i) {
+    const a = this.W?.animals[i]; if (!a) return false;
+    const r = punch(this.W, a, a._nextHand === 'L' ? 'L' : 'R');
+    if (r) { a._nextHand = a._nextHand === 'L' ? 'R' : 'L'; this.onEvent({ type: 'swing', who: i }); }
+    return !!r;
+  }
+  doGrab(i) {
+    const a = this.W?.animals[i]; if (!a) return false;
+    if (this.W.grabs.has(i)) { const ok = release(this.W, a, true); if (ok) this.onEvent({ type: 'throw', who: i }); return ok; }
+    const g = grab(this.W, a);
+    if (g) this.onEvent({ type: 'grab', who: i, on: g.on });
+    return !!g;
+  }
+  cycleView() { this.viewIdx = (this.viewIdx + 1) % VIEWS.length; return VIEWS[this.viewIdx]; }
+
+  /* ── AI ────────────────────────────────────────────────────────────────
+     刻意做得笨一點:AI 的樂趣不在強,而在「它也會被自己絆倒」。
+     ⚠ 不可以「站在射程內就必打」——那會變成沒有節奏的連打(同 3d-game-kit
+       那條「攔截不可站在路徑上就必攔」的同族)。所以出手有機率與冷卻。 */
+  _ai(i, dt) {
+    const me = this.W.animals[i];
+    const foe = this.W.animals.find(x => x !== me && x.fellAt == null);
+    if (!foe || me.fellAt != null) return { dx: 0, dz: 0 };
+    me._aiT = (me._aiT || 0) - dt;
+    const mp = me.parts.chest.translation(), fp = foe.parts.chest.translation();
+    let dx = fp.x - mp.x, dz = fp.z - mp.z;
+    const d = Math.hypot(dx, dz) || 1;
+    /* 邊緣自保:離台邊太近就先往中間走(不然 AI 會自己走下去,而那不好笑只讓人覺得爛)*/
+    const rMe = Math.hypot(mp.x, mp.z);
+    /* 邊緣自保:0.78 太晚(實測 12 場會有 1 場自己掉下去)⇒ 提早到 0.68,
+       而且**離邊愈近就愈全力往內走**(不是固定速度往內飄)。*/
+    if (rMe > this.cfg.arenaRadius * 0.68) {
+      const k = Math.min(1, (rMe / this.cfg.arenaRadius - 0.68) / 0.22 + 0.5);
+      return { dx: -mp.x / (rMe || 1) * k, dz: -mp.z / (rMe || 1) * k };
+    }
+    if (me._aiT <= 0) {
+      me._aiT = 0.35 + this.rng() * 0.5;
+      /* ⚠ 靠近台邊時**不出拳** —— 出拳會給自己一個往前的反作用力,
+         那正是 AI 自己走下台的最後一步(邊緣自保只管走路,管不到出手)。*/
+      const safe = rMe < this.cfg.arenaRadius * 0.62;
+      if (d < 1.15 && safe && this.rng() < 0.55) this.doPunch(i);
+      else if (d < 0.9 && safe && this.rng() < 0.25) this.doGrab(i);
+      else if (d > 3 && safe && this.rng() < 0.12) this.doJump(i);
+    }
+    if (d < 0.75) return { dx: 0, dz: 0 };            // 太近就別再擠
+    return { dx: dx / d, dz: dz / d };
+  }
+
+  /* ── 每幀 ──────────────────────────────────────────────────────────── */
+  update(dt) {
+    if (!this.W) return;
+    dt = Math.min(dt, 1 / 20);                         // 掉幀時不要讓物理一次跳太多
+    const inputs = {};
+    for (let i = 0; i < this.W.animals.length; i++) {
+      if (this.state !== 'fight') { inputs[i] = { dx: 0, dz: 0 }; continue; }
+      inputs[i] = this.cfg.ai[i] ? this._ai(i, dt) : (this._moves?.[i] || { dx: 0, dz: 0 });
+    }
+    const r = stepWorld(this.W, dt, inputs);
+    for (const h of r.hits) this.onEvent({ type: 'hit', ...h });
+    if (r.falls.length && this.state === 'fight') this._onFall(r.falls);
+    this._syncMeshes();
+    this._updateCamera(dt);
+    if (this.state === 'roundEnd' && this.W.t >= this.roundEndT) this._nextRound();
+  }
+
+  _onFall(fallen) {
+    /* 掉下去的人不得分,其餘的人各得一分(兩人局就是對手得分)*/
+    for (const a of this.W.animals) if (!fallen.includes(a.i) && a.fellAt == null) a.score++;
+    const loser = fallen[0];
+    const winner = this.W.animals.find(a => !fallen.includes(a.i));
+    this.onEvent({ type: 'fall', who: loser, scorer: winner ? winner.i : null });
+    const champ = this.W.animals.find(a => a.score >= this.winScore);
+    if (champ) {
+      this.state = 'matchEnd';
+      this.msg = `🏆 ${TEAM[champ.i % TEAM.length].label}(${KINDS[this.cfg.kinds[champ.i]].name})贏了這一場!`;
+      this.onEvent({ type: 'matchEnd', who: champ.i });
+    } else {
+      this.state = 'roundEnd';
+      this.roundEndT = this.W.t + 1.6;
+      this.msg = winner
+        ? `${TEAM[winner.i % TEAM.length].label} 得分!`
+        : '同時掉下去了!';
+      this.onEvent({ type: 'roundEnd' });
+    }
+  }
+  _nextRound() {
+    this.round++;
+    for (let i = 0; i < this.W.animals.length; i++) respawn(this.W, this.W.animals[i], this.spawns[i]);
+    this.state = 'fight';
+    this.msg = `第 ${this.round} 回合`;
+  }
+  /** 重新開一場(比分歸零)*/
+  restart() {
+    for (let i = 0; i < this.W.animals.length; i++) {
+      respawn(this.W, this.W.animals[i], this.spawns[i]);
+      this.W.animals[i].score = 0;
+    }
+    this.round = 1; this.state = 'fight'; this.msg = '第 1 回合 —— 把對手推下台!';
+  }
+
+  _syncMeshes() {
+    for (let i = 0; i < this.W.animals.length; i++) {
+      const a = this.W.animals[i], g = this.mesh[i];
+      for (const k of PARTS) {
+        const t = a.parts[k].translation(), q = a.parts[k].rotation();
+        g[k].position.set(t.x, t.y, t.z);
+        g[k].quaternion.set(q.x, q.y, q.z, q.w);
+      }
+      // 腳下光圈貼在台面上;掉下台之後就不要留在原地(!! 見下面那條鐵則)
+      const p = a.parts.pelvis.translation();
+      const ring = this.rings[i];
+      ring.position.set(p.x, 0.03, p.z);
+      /* ★ 3d-game-kit:`mesh.visible` 只認嚴格 false ——
+         任何運算式一律包 `!!`,漏掉的代價是「莫名多一個東西浮在畫面上」。*/
+      ring.visible = !!(a.fellAt == null && p.y > -0.5);
+    }
+  }
+
+  _updateCamera(dt) {
+    const A = this.W.animals;
+    const c = new THREE.Vector3();
+    let n = 0;
+    for (const a of A) { const t = a.parts.chest.translation(); if (a.fellAt == null) { c.add(new THREE.Vector3(t.x, t.y, t.z)); n++; } }
+    if (n) c.divideScalar(n); else c.set(0, 1, 0);
+    const R = this.cfg.arenaRadius;
+    let pos, look = c.clone(), up = new THREE.Vector3(0, 1, 0);
+    const view = VIEWS[this.viewIdx].key;
+    if (view === 'chase') {
+      const me = A[0];
+      const f = me ? me.facing : 0;
+      pos = new THREE.Vector3(c.x - Math.sin(f) * 6.2, c.y + 3.4, c.z - Math.cos(f) * 6.2);
+    } else if (view === 'side') {
+      pos = new THREE.Vector3(R + 5.5, 4.2, 0);
+    } else {
+      /* ⚠ 正上方視角:視線與 up=(0,1,0) 平行 = 退化,lookAt 的 roll 變隨機
+         (3d-game-kit 實錄:畫面斜斜的,而且每次進來斜的角度還不一樣)。
+         ⇒ 這個視角把 up 明確定成場地軸,並且 up 也走同一支 lerp,切視角才不甩頭。*/
+      pos = new THREE.Vector3(c.x, 14, c.z + 0.001);
+      up = new THREE.Vector3(0, 0, -1);
+    }
+    const k = 1 - Math.exp(-dt * 3.2);
+    this._camPos.lerp(pos, k);
+    this._camLook.lerp(look, k);
+    this._camUp.lerp(up, k).normalize();
+    this.camera.position.copy(this._camPos);
+    this.camera.up.copy(this._camUp);
+    this.camera.lookAt(this._camLook);
+  }
+
+  resize(w, h) {
+    if (!this.renderer) return;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / Math.max(1, h);
+    this.camera.updateProjectionMatrix();
+  }
+  render() { if (this.renderer) this.renderer.render(this.scene, this.camera); }
+
+  /** HUD 要的東西一次給齊(main.js 不要自己去翻物理內部)*/
+  hud() {
+    return {
+      state: this.state, round: this.round, msg: this.msg, view: VIEWS[this.viewIdx].name,
+      winScore: this.winScore,
+      players: this.W.animals.map((a, i) => ({
+        i, label: TEAM[i % TEAM.length].label, css: TEAM[i % TEAM.length].css,
+        kind: KINDS[this.cfg.kinds[i]].name, score: a.score,
+        dizzy: a.stun > 0, held: this.W.grabs.has(i), ai: !!this.cfg.ai[i],
+        onEdge: (() => { const p = a.parts.pelvis.translation(); return Math.hypot(p.x, p.z) > this.cfg.arenaRadius * 0.8; })(),
+      })),
+    };
+  }
+}
+
+export { TUNE };

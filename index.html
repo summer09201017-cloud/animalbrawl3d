@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>🐾 毛毛大亂鬥 — 物理布娃娃派對</title>
+<meta name="theme-color" content="#8fd3f4">
+<link rel="manifest" href="./manifest.webmanifest">
+<style>
+  :root{ --ink:#20262e; --card:#fffdf8; --line:#d9d2c4; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#8fd3f4;
+    font-family:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;color:var(--ink);
+    -webkit-tap-highlight-color:transparent}
+  #cv{display:block;width:100%;height:100%;touch-action:none}
+
+  /* ── 選單 ── */
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;padding:18px;background:linear-gradient(#a8e0f7,#dff3d8);overflow:auto;z-index:20}
+  #menu h1{margin:0;font-size:clamp(28px,7vw,46px)}
+  #menu .sub{margin:0 0 4px;font-size:clamp(13px,3.4vw,16px);opacity:.8;text-align:center}
+  .rows{display:flex;flex-direction:column;gap:8px;width:min(430px,94vw)}
+  .row{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;padding:9px 12px;font-size:15px}
+  .row .lb{font-weight:800;min-width:72px}
+  .row select{flex:1;font:inherit;font-size:15px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  .chk{display:flex;align-items:center;gap:5px;font-size:13.5px;white-space:nowrap}
+  .chk input{width:19px;height:19px}
+  .go{margin-top:6px;font:inherit;font-size:22px;font-weight:900;padding:13px 46px;border:0;border-radius:16px;
+    background:#ff8a65;color:#fff;box-shadow:0 5px 0 #d2664a;cursor:pointer}
+  .go:active{transform:translateY(3px);box-shadow:0 2px 0 #d2664a}
+  .keys{margin-top:10px;font-size:13px;line-height:1.9;text-align:center;opacity:.9}
+  .keys .dim{opacity:.66;font-size:12.5px}
+
+  /* ── HUD ── */
+  #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:10}
+  .hudbar{display:flex;gap:10px;justify-content:center;padding:8px}
+  .pl{background:rgba(255,253,248,.92);border:2px solid var(--c);border-radius:12px;
+    padding:5px 12px;min-width:132px;text-align:center}
+  .pl .nm{font-size:13px;font-weight:900;color:var(--c)}
+  .pl .kd{margin-left:5px;color:var(--ink);opacity:.75;font-weight:600}
+  .pl .ai{margin-left:5px;font-size:11px;background:#e6e0d2;border-radius:6px;padding:1px 5px;color:#5a5346}
+  .pl .sc{font-size:19px;letter-spacing:2px;color:var(--c);line-height:1.2}
+  .pl .st{font-size:12px;min-height:16px;opacity:.85}
+  .mid{position:absolute;top:34%;left:0;right:0;text-align:center}
+  .msg{display:inline-block;background:rgba(32,38,46,.78);color:#fff;font-size:clamp(16px,4.6vw,26px);
+    font-weight:900;padding:9px 20px;border-radius:14px}
+  .vw{position:absolute;left:10px;bottom:10px;font-size:12.5px;background:rgba(255,253,248,.85);
+    border-radius:9px;padding:4px 9px}
+  #again{position:fixed;left:50%;top:52%;transform:translateX(-50%);z-index:15;display:none;
+    font:inherit;font-size:19px;font-weight:900;padding:11px 30px;border:0;border-radius:14px;
+    background:#4fc3f7;color:#fff;box-shadow:0 4px 0 #2f9ac9;cursor:pointer}
+
+  /* ── 觸控(手機/平板) ── */
+  #touch{position:fixed;inset:0;pointer-events:none;z-index:12}
+  #pad{position:absolute;left:14px;bottom:14px;width:118px;height:118px;border-radius:50%;
+    background:rgba(255,255,255,.30);border:2px solid rgba(255,255,255,.6);pointer-events:auto;
+    display:grid;place-items:center;touch-action:none}
+  #stick{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.85);
+    box-shadow:0 2px 6px rgba(0,0,0,.2)}
+  .btns{position:absolute;right:12px;bottom:14px;display:grid;grid-template-columns:auto auto;gap:9px;
+    pointer-events:auto}
+  .btns button{font:inherit;font-size:15px;font-weight:900;width:74px;height:60px;border:0;border-radius:16px;
+    background:rgba(255,253,248,.92);color:var(--ink);box-shadow:0 3px 0 rgba(0,0,0,.18)}
+  .btns button:active{transform:translateY(2px)}
+  /* 桌機不需要虛擬按鈕:有實體鍵盤時整組藏起來(不藏會擋住畫面下緣) */
+  @media (hover:hover) and (pointer:fine){ #touch{display:none} }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud"></div>
+<button id="again">🔁 再來一場</button>
+<div id="touch">
+  <div id="pad"><div id="stick"></div></div>
+  <div class="btns">
+    <button id="btJump">跳</button><button id="btPunch">出拳</button>
+    <button id="btGrab">抓/丟</button><button id="btView">視角</button>
+  </div>
+</div>
+<div id="menu"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

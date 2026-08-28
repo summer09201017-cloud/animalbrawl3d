@@ -1,0 +1,12 @@
+{
+  "name": "毛毛大亂鬥 — 物理布娃娃派對",
+  "short_name": "毛毛大亂鬥",
+  "description": "3D 物理布娃娃派對遊戲:把對手推下台。同機兩人或對電腦。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#8fd3f4",
+  "theme_color": "#8fd3f4",
+  "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
