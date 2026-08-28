@@ -118,9 +118,15 @@ export function addAnimal(W, at, kind = 'cat') {
   const dxLeg = 0.13, dxArm = S.chest[0] + S.upperArm[1];
 
   const P = {};
-  P.pelvis = box(world, i, x0, yPelvis, z0, S.pelvis, { density: 45 });
-  P.chest = box(world, i, x0, yChest, z0, S.chest, { density: 36 });
-  P.head = ball(world, i, x0, yHead, z0, S.head, { density: 16 });
+  /* 🥚 不倒翁的原理是**重心壓在底部**:髖很重、頭很輕 ⇒ 重力自己會把它扶正,
+     扶正力矩只要幫個忙,不必硬把整隻扳回來。
+     ⚠ 0828 使用者:「角色站不起來了,要像不倒翁一樣」。首版三個密度差不多,
+       重心落在胸口附近 ⇒ 一倒下去重力沒有理由把它扶回來,只能靠力矩硬扳,
+       而力矩扳不動的時候它就**歪在那裡不動了**(實測傾角 84°~111° 停住)。
+     ★ 頭輕還有第二個好處:被打的時候頭甩得更誇張(那是這型遊戲的笑點)。*/
+  P.pelvis = box(world, i, x0, yPelvis, z0, S.pelvis, { density: 130 });
+  P.chest = box(world, i, x0, yChest, z0, S.chest, { density: 22 });
+  P.head = ball(world, i, x0, yHead, z0, S.head, { density: 7 });
   /* ⚠⚠ Rapier 的 capsule(halfHeight, radius) **長軸是 Y**。
      首建時我把手臂當成 X 軸橫擺,錨點就落在膠囊的**側面**而不是端點 ⇒
      每個肩關節都變成一根長槓桿,兩幀之內整隻動物炸到座標 10^5(實測 pelvis y=-385140)。
@@ -151,7 +157,18 @@ export function addAnimal(W, at, kind = 'cat') {
     if (lim) j.setLimits(lim[0], lim[1]);
     J.push(j); named[n] = j; return j;
   };
-  sph('waist', P.pelvis, P.chest, V(0, S.pelvis[1], 0), V(0, -S.chest[1], 0));
+  /* 🧱 腰改成**剛性接合**,軀幹是一體的。
+     ⚠⚠ 這是改結構,不是調參數 —— 而且是在轉了三輪旋鈕之後才想到的:
+       髖與胸原本各自是一顆會被扶正的剛體,**兩顆在互相打架**;
+       再加上四肢扶正的反作用力也全灌在髖上,結果是「前 10 幀正常,第 20~40 幀炸開」,
+       之後整隻在 28°~69° 之間亂晃,怎麼調增益都只是換一種晃法。
+     ★ 不倒翁的本體本來就該是**一顆有重量的整體**,不是兩節互相角力的積木。
+       布娃娃的滑稽感留給四肢與頭 —— 那才是玩家在看的地方。*/
+  J.push(world.createImpulseJoint(
+    R.JointData.fixed(V(0, S.pelvis[1], 0), { x: 0, y: 0, z: 0, w: 1 },
+                      V(0, -S.chest[1], 0), { x: 0, y: 0, z: 0, w: 1 }),
+    P.pelvis, P.chest, true));
+  named.waist = J[J.length - 1];
   /* 🧠 脖子用**帶限位的 revolute**,不是球窩。
      ⚠⚠ 這是改結構、不是調參數:球窩在 Rapier 沒有角度限位,頭可以繞著頸點盪到胸口
        旁邊甚至下方,而那個姿勢**完全滿足關節約束**(不會有任何錯誤)。
@@ -194,9 +211,22 @@ export function addAnimal(W, at, kind = 'cat') {
      ★ 所以理智夾要**可計數**:夾了幾次是一個可以斷言的東西,
        靜靜地夾住不出聲的話,這個坑會一直留在專案裡。*/
 export const TUNE = {
-  moveForce: 62,        // 走路推力(施在 pelvis)
+  moveForce: 62,        // 走路推力(一半給髖、各 1/4 給兩隻小腿,見 control)
+  moveTipComp: 1.4,    // 翻倒力矩抵銷幾成(1=完全抵銷=推不倒的冰箱,那就沒有踉蹌感了)
   maxSpeed: 3.4,
-  uprightK: 11,         // 平衡 P 項(越大越挺,太大會變成鎖直的機器人)
+  /* 扶正:uprightK 是「站著時輕輕扶」的力(越大越挺,太大會變成鎖直的機器人);
+     getUpBoost 是「倒了之後加碼多少」—— 不倒翁的個性就調這個。*/
+  uprightK: 11, getUpBoost: 5.5,
+  /* 🔧 積分項:治「固定歪 11° 不回正」。
+     ⚠⚠ 病根量出來了:歪的方向**永遠是世界座標 −z,跟角色朝哪無關** ——
+       所以不是身體自己的力,是一股固定的干擾。把膝關節限位翻過來,歪的方向也跟著翻
+       ⇒ 真兇是**膝馬達的穩態誤差**(馬達目標 0,重力壓著它,P 控制永遠差一點)。
+     ★ 這是課本題:P 控制器碰到固定干擾**必然有穩態誤差**,解法是加積分項,
+       不是把 P 調大 —— 實測把 uprightK 從 11 拉到 40,歪的角度是變小了,
+       但擺幅從 0.026 m 爆到 2.02 m(整隻在彈跳)。**調大 P 是在拿震盪換誤差。**
+     ⚠ 防積分飽和:①限幅 ②被打癱/大角度翻倒時歸零(那時候要的是快速翻正,
+       不是慢慢累積的微調;不歸零的話爬起來會過衝)。*/
+  uprightI: 0, uprightIMax: 0.42,
   uprightD: 2.6,        // 平衡 D 項(阻尼,太小會抖)
   faceK: 3.4,           // 轉向力矩
   /* 🦵 腿力:把身體撐到站立高度的 PD 彈簧。**只准往上推,不准往下拉** ——
@@ -214,6 +244,16 @@ export const TUNE = {
      看起來像死掉的。⚠ 這條不會亮任何紅燈(座標有限、沒有 NaN、還站得住),
      只有斷言「頭在胸口上面」才抓得到(test/physics.mjs A5 首跑就是紅的)。*/
   neckK: 3.2, neckD: 0.55, neckLift: 190, neckLiftD: 16,
+  /* 🦴 四肢姿勢:髖與肩是**球窩關節,Rapier 沒有馬達也沒有限位** ——
+     不主動扶的話手腳會外張成螃蟹,而軀幹還是「站著」的高度。
+     ⚠⚠ 這是本專案最貴的一課:我的斷言只量「pelvis 高度 > 站姿七成」,
+       所以一團縮著的、腿翻到身上的、胸口躺平 111° 的角色,**測試一路全綠**——
+       因為腿彈簧照樣把那一團撐到 0.62 m。使用者一玩就看出來:「角色站不起來了」。
+     ⇒ 姿勢要靠**每個部位各自的傾角**驗,不能只量一個高度(test physics.mjs I 段)。
+     ★ 腿比手用力(腿要撐住身體;手鬆一點才會晃、才好笑)。*/
+  /* 單位是 rad/s² per rad(已按各肢慣量換算,見 alignLimb)*/
+  limbLegK: 500, limbLegD: 33,
+  limbArmK: 260, limbArmD: 26,
   jumpImpulse: 20,   // 實測 20×2 顆 ≈ 跳 0.73 m(9.5 只跳 0.09,腿力阻尼把它吃掉了)
   punchImpulse: 190,   // 持續施力版(N),不是一次性衝量
   punchStun: 0.75,      // 被打中癱軟幾秒
@@ -265,13 +305,42 @@ function applyUpright(W, a, dt) {
        ★ 這種錯不會拋例外、不會進 console,只會讓角色「一出生就飛走」——
          而那個症狀看起來像關節設定壞掉,很容易往錯的地方查。*/
   const up = localToWorldY(q);
-  const crossX = -up.z, crossZ = up.x;
+  /* ⚠⚠ 首版直接拿 cross 的分量當誤差,而 |cross(up, ŷ)| = sin(傾角):
+     傾角 90° 時最大,**過了 90° 反而愈躺平愈小**,180°(完全倒栽)時是 0 ——
+     也就是「倒得愈徹底,想爬起來的力愈小」,那正好是反的。
+     ⇒ 改成:方向取正規化的旋轉軸,大小取**真正的夾角**(acos),
+       這樣 180° 也有滿滿的扶正力。
+     ★ 而且傾角越大越加碼(getUp):站著時輕輕扶(才會晃、才好笑),
+       真的倒了就用力爬起來(那是使用者要的不倒翁)。*/
+  const ang = Math.acos(Math.max(-1, Math.min(1, up.y)));      // 0=站直,π=倒栽
+  const axLen = Math.hypot(up.z, up.x) || 1e-6;
+  const axX = -up.z / axLen, axZ = up.x / axLen;
+  const getUp = 1 + TUNE.getUpBoost * (ang / Math.PI);          // 越倒越用力
+  /* 積分:只在「快站直了」的小角度區間累積 —— 大角度時要的是翻正不是微調 */
+  if (ang < 0.45 && a.hp > 0.5) {
+    a.iX = (a.iX || 0) + axX * ang * dt;
+    a.iZ = (a.iZ || 0) + axZ * ang * dt;
+    const im = Math.hypot(a.iX, a.iZ);
+    if (im > TUNE.uprightIMax) { a.iX *= TUNE.uprightIMax / im; a.iZ *= TUNE.uprightIMax / im; }
+  } else { a.iX = 0; a.iZ = 0; }                      // 防飽和:倒了就歸零
   const w = chest.angvel();
-  const k = TUNE.uprightK * a.hp, d = TUNE.uprightD * a.hp;
+  const k = TUNE.uprightK * a.hp * getUp, d = TUNE.uprightD * a.hp;
+  const ki = TUNE.uprightI * a.hp;
   chest.applyTorqueImpulse(V(
-    (crossX * k - w.x * d) * dt,
+    (axX * ang * k + a.iX * ki - w.x * d) * dt,
     -w.y * d * 0.35 * dt,
-    (crossZ * k - w.z * d) * dt), true);
+    (axZ * ang * k + a.iZ * ki - w.z * d) * dt), true);
+  /* 髖也要一起扶 —— 只扶胸口的話,腰會被扭成 S 形而下半身還躺著。
+     ⚠⚠ 但必須用**髖自己的**誤差,不可以拿胸口的誤差去轉髖。
+       首版就是拿 axX/axZ/ang(胸口算出來的)直接施在 pelvis 上 ⇒
+       髖被轉到一個跟它自己姿勢無關的方向,實測**髖傾 147°(幾乎上下顛倒)**、
+       兩條腿翻到髖旁邊、左右腿還互換了位置 —— 整隻縮成一團被腿彈簧撐在半空。
+     ★★ 而「站得住」的斷言只量 pelvis 高度,所以**一路全綠**:
+       腿彈簧照樣把那一團撐到 0.62 m,高度完全正確、姿勢完全錯誤。
+       這就是使用者說的「角色站不起來了」——
+       ⇒ 教訓:姿勢類的驗收要量**每個部位各自的傾角**,不能只量一個高度。*/
+  /* 腰是 fixed joint ⇒ 髖跟著胸走,**不要再單獨扶髖** ——
+     兩個扶正器對同一塊剛體施力就是自己跟自己打架(那正是上一版的病)。*/
 
   /* 🧠 脖子:把頭扶正(同一支 PD,力道小很多 —— 太大會變成僵硬的機器人頭)。*/
   const head = a.parts.head;
@@ -308,6 +377,35 @@ function applyUpright(W, a, dt) {
     chest.applyImpulse(V(-ix, -iy, -iz), true);
   }
 
+  /* 🦴 四肢扶正:讓大腿/小腿/上臂/前臂的本地 +y 對齊世界上方
+     = 腿垂在身體下面、手垂在身側(它們建構時就是這個朝向)。
+     ★ 反作用力施回**父節點**,總角動量才不變(同抬頭彈簧那條:
+       只推一邊 = 對系統注入動量,角色會被自己的手腳推著跑)。*/
+  /* ⚠⚠ 增益要**按各肢自己的慣量換算**,不可以拿一組數字套所有部位。
+     這個坑在本專案犯了兩次:第一次把胸口(慣量約 0.08)調好的 26 直接用在大腿
+     (慣量約 0.001,**差 80 倍**)⇒ 角加速度 430 rad/s²,「前 10 幀正常、第 20~40 幀炸開」;
+     調小之後還是有 51 次速度被理智夾住(小腿頂到 40 rad/s)。
+     ⇒ 現在乘上 I ≈ m·L²·0.4,kk 的單位就變成「rad/s² per rad」——
+       與部位大小無關,換尺寸也不必重調。★ 理智夾的次數就是這件事有沒有做對的溫度計。*/
+  const alignLimb = (child, parent, kk, dd, len) => {
+    const cu = localToWorldY(child.rotation());
+    const cAng = Math.acos(Math.max(-1, Math.min(1, cu.y)));
+    if (cAng < 1e-4) return;
+    const cl = Math.hypot(cu.z, cu.x) || 1e-6;
+    const cw = child.angvel();
+    const I = child.mass() * len * len * 0.4;
+    const tx = I * (-cu.z / cl * cAng * kk - cw.x * dd) * a.hp * dt;
+    const tz = I * (cu.x / cl * cAng * kk - cw.z * dd) * a.hp * dt;
+    child.applyTorqueImpulse(V(tx, 0, tz), true);
+    parent.applyTorqueImpulse(V(-tx, 0, -tz), true);
+  };
+  for (const side of ['L', 'R']) {
+    alignLimb(a.parts['leg' + side + '0'], a.parts.pelvis, TUNE.limbLegK, TUNE.limbLegD, SIZE.thigh[0]);
+    alignLimb(a.parts['leg' + side + '1'], a.parts['leg' + side + '0'], TUNE.limbLegK * 0.7, TUNE.limbLegD * 0.7, SIZE.shin[0]);
+    alignLimb(a.parts['arm' + side + '0'], chest, TUNE.limbArmK, TUNE.limbArmD, SIZE.upperArm[0]);
+    alignLimb(a.parts['arm' + side + '1'], a.parts['arm' + side + '0'], TUNE.limbArmK * 0.6, TUNE.limbArmD * 0.6, SIZE.lowerArm[0]);
+  }
+
   /* 🦵 腿力(站起來的另一半):pelvis 的高度 PD。
      ★ 為什麼不是把 pelvis 的 y 直接設好:那會變成「浮在空中的冰箱」——
        被推的時候沒有反作用力、掉台也掉不下去,而互推與掉台就是這個遊戲的全部。
@@ -318,8 +416,15 @@ function applyUpright(W, a, dt) {
      不關掉的話按跳只會「蹲一下」(首調實測只跳 0.09 m)。*/
   const grounded = a.airT <= 0 && footGrounded(W, a);
   if (grounded) {
+    /* ⚠⚠ 腿力要**隨傾角收掉**。首版不管身體歪成什麼樣都照撐 ⇒
+       角色躺著卻被垂直的腿力頂在半空,實測「pelvis 高度接近站姿、傾角卻 105°」——
+       看起來像浮著的怪姿勢,而且那股力**正好抵銷扶正力矩**,於是它永遠卡在那裡。
+       ★ 這是最誤導的一種:高度是對的、位置是對的,只有姿勢是錯的,
+         而「站得住」的斷言(量高度)完全看不出來。
+       ⇒ cos(傾角) 當係數:站直全力撐,躺平不撐(讓它先滾正,再撐起來)。*/
+    const lean = Math.max(0, Math.cos(ang));
     const py = pelvis.translation().y, pv = pelvis.linvel().y;
-    const f = Math.max(0, (a.standY - py) * TUNE.legK - pv * TUNE.legD) * a.hp;
+    const f = Math.max(0, (a.standY - py) * TUNE.legK - pv * TUNE.legD) * a.hp * lean;
     pelvis.applyImpulse(V(0, f * dt, 0), true);
   }
 }
@@ -349,7 +454,28 @@ export function control(W, a, dt, input) {
     const sp = Math.hypot(v.x, v.z);
     /* 到了最高速就不再加力 —— 不然按住方向鍵會一路加速到飛出去。*/
     const f = sp < TUNE.maxSpeed ? TUNE.moveForce * a.hp : 0;
-    pelvis.applyImpulse(V(dx * f * dt, 0, dz * f * dt), true);
+    /* ⚠⚠ 移動的力要**分給腳**,不能全推在髖上。
+       腰改成剛性接合之後,推髖 = 推整個軀幹,而腳還留在後面 ⇒
+       軀幹繞著腳往前翻,實測走 1.5 秒就撲倒到 101°(而且它會自己爬起來再撲一次)。
+       ★ 症狀是「走一走就趴下去」,很容易被當成平衡沒調好去加大扶正力 ——
+         但那治不了,因為問題是**力施加的位置**不是力的大小。
+       ⇒ 腳先走、身體跟上:一半的力給兩隻小腿,髖只拿一半。*/
+    pelvis.applyImpulse(V(dx * f * 0.5 * dt, 0, dz * f * 0.5 * dt), true);
+    for (const key of ['legL1', 'legR1']) {
+      a.parts[key].applyImpulse(V(dx * f * 0.25 * dt, 0, dz * f * 0.25 * dt), true);
+    }
+    /* 🧮 抵銷「推力造成的翻倒力矩」——**這是物理不是參數**,所以要算不要調。
+       水平推力施在重心、支撐點在腳底 ⇒ 對接觸點必然產生 τ = r × F 的翻倒力矩
+       (r = 腳底到重心的向量)。不抵銷的話走一走就往前撲,實測走 1.5 秒趴到 101°;
+       而那個症狀看起來像「平衡沒調好」,往加大扶正力去調**治不了** ——
+       力矩來自力施加的位置,不是力的大小。
+       r × F 的符號**首版寫反了**,結果最大傾角 116°(比不抵銷還糟);
+       反過來之後 57°。⇒ 這種「加了反而更糟」就是符號的味道,先翻符號再調大小。
+       ⚠ 只抵銷一部分(compFrac):全抵銷會變成「推不倒的冰箱」,
+         而「推來推去會踉蹌」正是這個遊戲要的。*/
+    const hCom = Math.max(0.1, pelvis.translation().y - SIZE.shin[1]);
+    const Fx = dx * f, Fz = dz * f, c = TUNE.moveTipComp * hCom * dt;
+    pelvis.applyTorqueImpulse(V(Fz * c, 0, -Fx * c), true);
   }
   else if (a.hp > 0.25) {
     /* 🦶 沒有輸入 ⇒ 腳底抓地(見 TUNE.brake)。只在真的踩著台子時煞,

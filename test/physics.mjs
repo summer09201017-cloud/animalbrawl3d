@@ -14,7 +14,7 @@
      G 煞車             ← 煞太狠 ⇒ 站超穩但推不下台(玩法壞了,站樁測試全綠) */
 import {
   initPhysics, createWorld, addAnimal, stepWorld, jump, punch, grab, release,
-  respawn, PARTS, SIZE, TUNE, FALL_Y, footGrounded,
+  respawn, PARTS, SIZE, TUNE, FALL_Y, footGrounded, localToWorldY,
 } from '../src/physics.js';
 
 let pass = 0, fail = 0;
@@ -202,5 +202,75 @@ sec('H 🧬 一份名單、一份尺寸');
     a.standY.toFixed(4));
 }
 
-console.log(`\n🔬 physics:${pass} 過 / ${fail} 失敗`);
+/* ══════════ I 姿勢(這一段是整個專案最貴的一課)══════════ */
+sec('I 🧍 姿勢:要量每個部位各自的傾角,不能只量一個高度');
+{
+  /* ⚠⚠ 0828 使用者回報「角色站不起來了」。回頭一量才發現:它**從來沒有真的站起來過** ——
+       髖傾 134°、胸躺平 111°、頭在髖下面、腿翻到身體上方、還漂了 1.4 公尺。
+     ★★ 而 A2「pelvis 高度 > 站姿七成」**一路全綠**:腿彈簧照樣把那一團撐到 0.62 m。
+       高度對、位置對,**只有姿勢是錯的**,而當時沒有任何一條斷言在看姿勢。
+     ⇒ 這一段就是那個缺口。 */
+  const W = createWorld();
+  const a = addAnimal(W, { x: 0, z: 0 }, 'cat');
+  run(W, 5);
+  const tiltOf = (k) => {
+    const u = localToWorldY(a.parts[k].rotation());
+    return Math.acos(Math.max(-1, Math.min(1, u.y))) * 180 / Math.PI;
+  };
+  const worst = PARTS.map(k => [k, tiltOf(k)]).sort((x, y) => y[1] - x[1])[0];
+  ok('I1 ★★★ 每個部位都大致站正(最歪的 < 45°)—— 首版最歪的是髖,134°',
+    worst[1] < 45, worst[0] + ' ' + worst[1].toFixed(0) + '°');
+  ok('I2 ★★ 軀幹是一體的:髖與胸傾角幾乎相同(腰是剛性接合)',
+    Math.abs(tiltOf('pelvis') - tiltOf('chest')) < 6,
+    tiltOf('pelvis').toFixed(0) + '° vs ' + tiltOf('chest').toFixed(0) + '°');
+  const y = (k) => a.parts[k].translation().y;
+  ok('I3 ★★★ 由下而上:腳 < 膝 < 髖 < 胸 < 頭 —— 首版頭在髖下面',
+    y('legL1') < y('legL0') && y('legL0') < y('pelvis')
+    && y('pelvis') < y('chest') && y('chest') < y('head'),
+    PARTS.map(k => k + '=' + y(k).toFixed(2)).join(' '));
+  ok('I4 ★★ 腳在身體下面(髖比腳高 > 0.3 m)',
+    y('pelvis') - Math.max(y('legL1'), y('legR1')) > 0.3,
+    (y('pelvis') - Math.max(y('legL1'), y('legR1'))).toFixed(3) + ' m');
+  ok('I5 ★ 左腿在左邊、右腿在右邊(首版兩腿位置互換過)',
+    a.parts.legL1.translation().x < a.parts.legR1.translation().x);
+  ok('I6 ★ 手垂在身側不是外張成螃蟹(上臂 < 50°)',
+    tiltOf('armL0') < 50 && tiltOf('armR0') < 50,
+    tiltOf('armL0').toFixed(0) + '° / ' + tiltOf('armR0').toFixed(0) + '°');
+}
+
+/* ══════════ I′ 不倒翁 ══════════ */
+sec("I′ 🥚 不倒翁(0828 使用者:「要像不倒翁一樣」)");
+{
+  const tiltC = (b) => {
+    const u = localToWorldY(b.parts.chest.rotation());
+    return Math.acos(Math.max(-1, Math.min(1, u.y))) * 180 / Math.PI;
+  };
+  for (const [nm, imp, tq] of [
+    ['輕輕推倒', { x: 18, y: 2, z: 0 }, { x: 0, y: 0, z: -3 }],
+    ['用力打飛', { x: 40, y: 8, z: 0 }, { x: 0, y: 0, z: -9 }],
+    ['整個翻過去', { x: 0, y: 2, z: 0 }, { x: 0, y: 0, z: -18 }],
+  ]) {
+    const W2 = createWorld({ arenaRadius: 12 });
+    const b = addAnimal(W2, { x: 0, z: 0 });
+    run(W2, 1.2);
+    b.parts.chest.applyImpulse(imp, true);
+    b.parts.chest.applyTorqueImpulse(tq, true);
+    run(W2, 7);
+    ok('I′ ' + nm + ' → 7 秒內自己站回來(傾角 < 30°)', tiltC(b) < 30, tiltC(b).toFixed(0) + '°');
+  }
+  const W3 = createWorld({ arenaRadius: 12 });
+  const c = addAnimal(W3, { x: 0, z: 0 });
+  run(W3, 1);
+  for (const k of PARTS) {
+    const p = c.parts[k].translation();
+    c.parts[k].setTranslation({ x: p.x, y: 1.5 - (p.y - 0.7), z: p.z }, true);
+    c.parts[k].setRotation({ x: 1, y: 0, z: 0, w: 0 }, true);
+    c.parts[k].setLinvel({ x: 0, y: 0, z: 0 }, true);
+    c.parts[k].setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+  run(W3, 8);
+  ok("I′ ★★★ 完全倒栽蔥(180°)也翻得回來 —— 這就是「不倒翁」", tiltC(c) < 30, tiltC(c).toFixed(0) + '°');
+}
+
+console.log(`\n🔬 physics(含姿勢與不倒翁):${pass} 過 / ${fail} 失敗`);
 process.exit(fail ? 1 : 0);
