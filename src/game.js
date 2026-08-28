@@ -48,14 +48,24 @@ function buildAnimalMesh(kind, teamColor) {
   const white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, emissive: 0x555555 });
   const g = {};
 
-  // 軀幹
-  const mkBox = (h, mat) => new THREE.Mesh(new THREE.BoxGeometry(h[0] * 2, h[1] * 2, h[2] * 2), mat);
-  g.pelvis = new THREE.Group(); g.pelvis.add(mkBox(SIZE.pelvis, fur));
+  /* 軀幹:**橢球**,不是方塊。
+     ⚠ 0828 使用者回報「角色不夠圓潤」—— 首版胸與髖用 BoxGeometry,
+       在一堆膠囊四肢與圓頭之間,那兩塊方的特別顯眼,整隻看起來像積木人。
+     ★ 物理形狀**照舊是 cuboid**(碰撞方塊比橢球快又穩),只有看的那一層改圓 ——
+       視覺與碰撞形狀不必一致,差幾公分玩家感覺不出來,但方角一眼就看得到。
+     ★ 稍微脹一點(1.06)蓋住方形碰撞箱的角,才不會出現「圓身體卡在方角上」的錯覺。*/
+  const mkBlob = (h, mat, plump = 1.06) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 18), mat);
+    m.scale.set(h[0] * plump, h[1] * plump, h[2] * plump);
+    return m;
+  };
+  g.pelvis = new THREE.Group(); g.pelvis.add(mkBlob(SIZE.pelvis, fur));
   g.chest = new THREE.Group();
-  g.chest.add(mkBox(SIZE.chest, fur));
-  {  // 肚子那一片淺色(可愛感的來源之一)
-    const b = mkBox([SIZE.chest[0] * 0.62, SIZE.chest[1] * 0.7, 0.02], belly);
-    b.position.z = SIZE.chest[2] + 0.005; g.chest.add(b);
+  g.chest.add(mkBlob(SIZE.chest, fur, 1.08));
+  {  // 肚子那一片淺色(可愛感的來源之一)—— 也改成貼在球面上的扁橢球
+    const b = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), belly);
+    b.scale.set(SIZE.chest[0] * 0.66, SIZE.chest[1] * 0.74, SIZE.chest[2] * 0.62);
+    b.position.z = SIZE.chest[2] * 0.62; g.chest.add(b);
   }
 
   // 頭 + 臉
@@ -64,12 +74,22 @@ function buildAnimalMesh(kind, teamColor) {
   g.head.add(new THREE.Mesh(new THREE.SphereGeometry(R, 22, 16), fur));
   const eye = (sx) => {
     const e = new THREE.Group();
+    /* 🏷 臉部零件一律**取名字**。理由是驗收:
+       測試要釘的是「臉上有沒有眼白/瞳孔/眉毛/嘴」,不是「它們是什麼幾何形狀」。
+       ⚠ 首版按 geometry.type 數(眉毛=BoxGeometry × 2),0828 把眉毛改成膠囊
+         之後測試當場紅 —— 而紅的是測試不是程式(同 /mutation-check 第四個姊妹坑:
+         斷言釘了「這一版剛好的實作細節」)。取名字之後,換幾何形狀不會紅,
+         真的把眉毛刪掉才會紅。*/
     const w = new THREE.Mesh(new THREE.SphereGeometry(R * 0.30, 14, 10), white);
+    w.name = 'eyeWhite';
     const p = new THREE.Mesh(new THREE.SphereGeometry(R * 0.155, 12, 9), dark);
+    p.name = 'pupil';
     p.position.z = R * 0.22;
-    const brow = new THREE.Mesh(new THREE.BoxGeometry(R * 0.44, R * 0.09, R * 0.09), dark);
+    const brow = new THREE.Mesh(new THREE.CapsuleGeometry(R * 0.05, R * 0.34, 6, 10), dark);
+    brow.rotation.z = Math.PI / 2;                       // 膠囊長軸轉成水平
+    brow.name = 'brow';
     brow.position.set(0, R * 0.40, R * 0.16);
-    brow.rotation.z = sx * -0.22;                       // 兩邊眉毛外八 = 好脾氣
+    brow.rotation.x = sx * 0.26;                        // 兩邊眉毛外八 = 好脾氣
     e.add(w, p, brow);
     e.position.set(sx * R * 0.42, R * 0.16, R * 0.76);
     return e;
@@ -77,8 +97,10 @@ function buildAnimalMesh(kind, teamColor) {
   g.head.add(eye(-1), eye(1));
   {  // 鼻子 + 微笑弧(TorusGeometry 半圈)
     const nose = new THREE.Mesh(new THREE.SphereGeometry(R * 0.17, 12, 9), M(K.nose, { rough: 0.4 }));
+    nose.name = 'nose';
     nose.position.set(0, -R * 0.06, R * 0.96); nose.scale.set(1.25, 0.85, 0.8);
     const smile = new THREE.Mesh(new THREE.TorusGeometry(R * 0.30, R * 0.045, 8, 18, Math.PI), dark);
+    smile.name = 'smile';
     smile.position.set(0, -R * 0.36, R * 0.82);
     smile.rotation.z = Math.PI;                          // 開口朝下 = 微笑(朝上會變成哭臉)
     g.head.add(nose, smile);
@@ -98,14 +120,15 @@ function buildAnimalMesh(kind, teamColor) {
     e.position.set(sx * R * 0.80, R * 0.30, 0); e.rotation.z = sx * 1.15; g.head.add(e);
   }
   if (K.ear === 'none') {  // 小鴨:改成扁嘴
-    const bill = new THREE.Mesh(new THREE.BoxGeometry(R * 0.66, R * 0.16, R * 0.5), M(K.nose, { rough: 0.5 }));
-    bill.position.set(0, -R * 0.18, R * 0.92); g.head.add(bill);
+    const bill = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), M(K.nose, { rough: 0.5 }));
+    bill.scale.set(R * 0.38, R * 0.10, R * 0.32);
+    bill.position.set(0, -R * 0.18, R * 0.94); g.head.add(bill);
   }
 
   // 四肢
   const limb = (hh, r, mat) => {
     const grp = new THREE.Group();
-    grp.add(new THREE.Mesh(new THREE.CapsuleGeometry(r, hh * 2, 6, 10), mat));
+    grp.add(new THREE.Mesh(new THREE.CapsuleGeometry(r, hh * 2, 10, 16), mat));
     return grp;
   };
   const paw = M(K.belly, { rough: 0.6 });
@@ -147,10 +170,19 @@ function buildAnimalMesh(kind, teamColor) {
 }
 
 /* ── 主體 ──────────────────────────────────────────────────────────────── */
+/* 視角。★ 0828 使用者回報「視角不要一直旋轉」——
+   首版預設是 chase(鏡頭掛在一號的 facing 上)⇒ 玩家一轉身鏡頭就跟著轉,
+   整個畫面一直在旋,看久了頭暈、也分不清哪邊是台邊。
+   ⇒ **預設改成 fixed:鏡頭跟著人「平移」,但方向永遠不變。**
+     會轉的 chase 留在最後一檔給想要的人選,不再是預設。
+   ⚠ 固定機位的必要配套(3d-game-kit 0826 sheepflock3d 實錘):
+     移動輸入必須**相對鏡頭**,不然會出現「按右卻往左走」——
+     main.js 的 moveFromKeys 本來就是用鏡頭的前/右向量算的,所以這條已經成立。*/
 export const VIEWS = [
-  { key: 'chase', name: '跟隨' },
+  { key: 'fixed', name: '固定機位(不轉)' },
   { key: 'side', name: '側面轉播' },
   { key: 'top', name: '高空俯瞰' },
+  { key: 'chase', name: '跟隨(會轉)' },
 ];
 
 export class Game {
@@ -393,13 +425,25 @@ export class Game {
     const R = this.cfg.arenaRadius;
     let pos, look = c.clone(), up = new THREE.Vector3(0, 1, 0);
     const view = VIEWS[this.viewIdx].key;
-    if (view === 'chase') {
+    if (view === 'fixed') {
+      /* 固定機位:方向是常數,只跟著人平移 ⇒ 畫面永遠不旋轉。
+         ★ 高度與距離跟著「兩隻分得多開」微調,兩個人跑到對角時才框得住,
+           但**方向不變** —— 會變的只有位置,那不會讓人頭暈。*/
+      let spread = 0;
+      for (const a of A) {
+        if (a.fellAt != null) continue;
+        const t = a.parts.chest.translation();
+        spread = Math.max(spread, Math.hypot(t.x - c.x, t.z - c.z));
+      }
+      const back = 7.0 + spread * 1.15, up = 4.2 + spread * 0.5;
+      pos = new THREE.Vector3(c.x, c.y + up, c.z + back);
+    } else if (view === 'chase') {
       const me = A[0];
       const f = me ? me.facing : 0;
       pos = new THREE.Vector3(c.x - Math.sin(f) * 6.2, c.y + 3.4, c.z - Math.cos(f) * 6.2);
     } else if (view === 'side') {
       pos = new THREE.Vector3(R + 5.5, 4.2, 0);
-    } else {
+    } else {   // top
       /* ⚠ 正上方視角:視線與 up=(0,1,0) 平行 = 退化,lookAt 的 roll 變隨機
          (3d-game-kit 實錄:畫面斜斜的,而且每次進來斜的角度還不一樣)。
          ⇒ 這個視角把 up 明確定成場地軸,並且 up 也走同一支 lerp,切視角才不甩頭。*/

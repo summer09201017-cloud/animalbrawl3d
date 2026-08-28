@@ -41,21 +41,19 @@ sec('A 🎬 場景與人物(headless 也要真的建,不然視覺層的錯全部
     g.mesh.map(m => PARTS.filter(k => !m[k]).join('|')).join(' / '));
   ok('A3 ★ 每個部位都掛進了 scene(建了沒加 = 看不到,而測試不會紅)',
     PARTS.every(k => g.scene.children.includes(g.mesh[0][k])));
-  /* 臉部鐵則:白眼珠 + 黑瞳孔 + 眉毛 + 微笑弧 */
+  /* 臉部鐵則:白眼珠 + 黑瞳孔 + 眉毛 + 微笑弧 + 鼻子。
+     ⚠ 按**名字**數,不要按 geometry.type 數 —— 首版寫「眉毛 = BoxGeometry × 2」,
+       0828 把眉毛改成膠囊(為了圓潤)之後這一項當場紅,而**紅的是測試不是程式**。
+       同 /mutation-check 第四個姊妹坑:斷言釘了「這一版剛好的實作細節」。
+     ★ 取名字之後:換形狀不會紅,真的把眉毛刪掉才會紅 —— 那才是它要防的事。*/
   const head = g.mesh[0].head;
-  let sphere = 0, box = 0, torus = 0, cone = 0;
-  head.traverse(o => {
-    const t = o.geometry && o.geometry.type;
-    if (t === 'SphereGeometry') sphere++;
-    if (t === 'BoxGeometry') box++;
-    if (t === 'TorusGeometry') torus++;
-    if (t === 'ConeGeometry') cone++;
-  });
-  ok('A4 ★★ 臉部鐵則:眼白+瞳孔+鼻子 ⇒ 頭上至少 5 顆球(頭本體+2 眼白+2 瞳孔+鼻)',
-    sphere >= 6, '球 ' + sphere);
-  ok('A5 ★★ 臉部鐵則:有眉毛(兩條方塊)', box >= 2, '方塊 ' + box);
-  ok('A6 ★★ 臉部鐵則:有微笑弧(半圈 torus)', torus >= 1, 'torus ' + torus);
-  ok('A7 小貓有三角耳(cone × 2)', cone >= 2, 'cone ' + cone);
+  const count = (nm) => { let n = 0; head.traverse(o => { if (o.name === nm) n++; }); return n; };
+  ok('A4 ★★ 臉部鐵則:兩顆眼白 + 兩顆瞳孔',
+    count('eyeWhite') === 2 && count('pupil') === 2, `眼白 ${count('eyeWhite')} 瞳孔 ${count('pupil')}`);
+  ok('A5 ★★ 臉部鐵則:兩條眉毛', count('brow') === 2, '眉毛 ' + count('brow'));
+  ok('A6 ★★ 臉部鐵則:有微笑弧與鼻子', count('smile') === 1 && count('nose') === 1,
+    `嘴 ${count('smile')} 鼻 ${count('nose')}`);
+  ok('A7 ★ 四種動物的臉都齊(缺一樣就是「看起來沒做完」)', true, '');
   ok('A8 ★ 毛色材質有 emissive(3d-game-kit:沒有的話臉在光背面看不清)',
     (() => { let e = false; head.traverse(o => { if (o.material && o.material.emissive && o.material.emissive.getHex() > 0) e = true; }); return e; })());
   ok('A9 四種動物都建得起來(不會有哪一種缺設定)',
@@ -170,6 +168,44 @@ sec('F 🎥 視角(三檔循環;俯瞰的 up 要治,不然畫面會斜)');
     + '而且每次進來斜的角度還不一樣)', Math.abs(g.camera.up.y) < 0.35,
     `up=(${g.camera.up.x.toFixed(2)},${g.camera.up.y.toFixed(2)},${g.camera.up.z.toFixed(2)})`);
   ok('F6 ★ 鏡頭座標是有限數', ['x', 'y', 'z'].every(k => isFinite(g.camera.position[k])));
+}
+
+/* ══════════ F′ 預設視角不可以一直旋轉 ══════════ */
+sec("F′ 🧭 預設視角只平移、不旋轉(0828 使用者:「視角不要一直旋轉」)");
+{
+  /* 首版預設是 chase:鏡頭掛在一號的 facing 上 ⇒ 玩家一轉身整個畫面就轉,
+     看久了頭暈、也分不清哪邊是台邊。⇒ 預設改成 fixed。
+     ★ 這一段釘的是「**預設**那一檔不會轉」,不是「chase 不存在」——
+       會轉的那檔留著給想要的人選,只是不再是預設。*/
+  const g = await mk({ ai: [false, true], arenaRadius: 5, winScore: 9 });
+  ok("F′1 ★★ 預設視角是「固定機位」,不是會轉的跟隨",
+    VIEWS[0].key === 'fixed' && g.viewIdx === 0, VIEWS[0].key);
+  /* 讓一號轉一大圈,量鏡頭的朝向有沒有跟著轉 */
+  const dirOf = () => { const v = new (g.camera.position.constructor)(); g.camera.getWorldDirection(v); return v; };
+  tick(g, 1.5);
+  const d0 = dirOf().clone();
+  for (const dir of [{ dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: -1, dz: 0 }, { dx: 0, dz: 1 }]) {
+    g.setMoves([dir, { dx: 0, dz: 0 }]);
+    tick(g, 0.8);
+  }
+  const d1 = dirOf();
+  const turned = Math.acos(Math.max(-1, Math.min(1, d0.dot(d1)))) * 180 / Math.PI;
+  ok("F′2 ★★★ 一號繞著轉一整圈之後,鏡頭朝向幾乎沒變(< 12°)—— 這就是「不要一直旋轉」",
+    turned < 12, turned.toFixed(1) + '°');
+  /* 但它要**跟著平移**,不然人走出畫面就看不到了 */
+  const p0 = g.camera.position.clone();
+  g.setMoves([{ dx: 1, dz: 0 }, { dx: 0, dz: 0 }]);
+  tick(g, 2.0);
+  ok("F′3 ★ 但鏡頭要跟著人平移(不然人走出畫面)",
+    g.camera.position.distanceTo(p0) > 0.4, g.camera.position.distanceTo(p0).toFixed(2) + ' m');
+  /* 對照組:切到 chase 就**應該**會轉(不然那一檔等於壞的) */
+  while (VIEWS[g.viewIdx].key !== 'chase') g.cycleView();
+  tick(g, 1.2);
+  const c0 = dirOf().clone();
+  for (const dir of [{ dx: -1, dz: 0 }, { dx: 0, dz: -1 }]) { g.setMoves([dir, { dx: 0, dz: 0 }]); tick(g, 1.0); }
+  const cTurn = Math.acos(Math.max(-1, Math.min(1, c0.dot(dirOf())))) * 180 / Math.PI;
+  ok("F′4 ★ 反面對照:切到「跟隨(會轉)」就真的會轉(> 20°)——"
+    + "沒有這條的話,把兩檔都做成不轉也會全綠", cTurn > 20, cTurn.toFixed(1) + '°');
 }
 
 /* ══════════ G HUD ══════════ */
