@@ -1,0 +1,264 @@
+{
+  "url": "https://hfpc-animalbrawl3d.pages.dev/",
+  "at": "2026-09-01T07:10:32.607Z",
+  "checks": [
+    {
+      "name": "選單標題出得來",
+      "pass": true,
+      "detail": "🐾 毛毛大亂鬥"
+    },
+    {
+      "name": "四個設定列都在(角色×2/幾分/台子)",
+      "pass": true,
+      "detail": "4 列"
+    },
+    {
+      "name": "鍵位印在畫面上(兩個孩子搶鍵盤時不會有人去讀 README)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "開始鈕觸控目標 ≥44px",
+      "pass": true,
+      "detail": "145×58"
+    },
+    {
+      "name": "選單有版本號/新增功能簡歷(game-must-haves ⑦)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "真 WebGL 建得起來、遊戲跑得動",
+      "pass": true,
+      "detail": "W.t=0.52s"
+    },
+    {
+      "name": "HUD 資料齊(hud() 這個物件對不對)",
+      "pass": true,
+      "detail": "一號/小貓 vs 二號/小狗(電腦)"
+    },
+    {
+      "name": "回合訊息字串有產生",
+      "pass": true,
+      "detail": "第 1 回合 —— 把對手推下台!"
+    },
+    {
+      "name": "★ HUD 真的看得見(不是只有資料對)",
+      "pass": true,
+      "detail": "#hud display=block 1280×720・比分卡 132×73"
+    },
+    {
+      "name": "★ 中央回合訊息真的看得見",
+      "pass": true,
+      "detail": "376×55"
+    },
+    {
+      "name": "★ 左下角視角提示真的看得見",
+      "pass": true,
+      "detail": "173×27"
+    },
+    {
+      "name": "固定機位:鏡頭座標沒有 NaN",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "固定機位:兩隻都框得住",
+      "pass": true,
+      "detail": "(0.03,-0.03) (-0.03,0.02)"
+    },
+    {
+      "name": "固定機位:按 D 真的往畫面右走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.98(0.96 0.98 0.98 0.97 0.99 1.00)・總位移 1.56m"
+    },
+    {
+      "name": "固定機位:按 W 真的往鏡頭前方走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.99(1.00 1.00 0.99 0.99 0.96 0.99)・總位移 1.32m"
+    },
+    {
+      "name": "側面轉播:鏡頭座標沒有 NaN",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "側面轉播:兩隻都框得住",
+      "pass": true,
+      "detail": "(0.06,-0.08) (-0.05,0.06)"
+    },
+    {
+      "name": "側面轉播:按 D 真的往畫面右走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 1.00(1.00 0.99 0.99 0.98 1.00 1.00)・總位移 1.21m"
+    },
+    {
+      "name": "側面轉播:按 W 真的往鏡頭前方走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.99(0.90 0.99 1.00 0.99 0.93 0.98)・總位移 1.52m"
+    },
+    {
+      "name": "高空俯瞰:鏡頭座標沒有 NaN",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "高空俯瞰:兩隻都框得住",
+      "pass": true,
+      "detail": "(0.01,0.23) (-0.01,-0.23)"
+    },
+    {
+      "name": "高空俯瞰:按 D 真的往畫面右走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.84(0.21 0.28 0.74 0.84 0.87 0.94)・總位移 1.20m"
+    },
+    {
+      "name": "高空俯瞰:按 W 真的往鏡頭前方走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 1.00(1.00 1.00 1.00 1.00 1.00 1.00)・總位移 1.77m"
+    },
+    {
+      "name": "跟隨:鏡頭座標沒有 NaN",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "跟隨:兩隻都框得住",
+      "pass": true,
+      "detail": "(-0.11,-1.03) (0.04,0.37)"
+    },
+    {
+      "name": "跟隨:按 D 真的往畫面右走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.94(0.94 1.00 0.63 0.65 0.54 1.00)・總位移 0.81m"
+    },
+    {
+      "name": "跟隨:按 W 真的往鏡頭前方走",
+      "pass": true,
+      "detail": "逐幀餘弦中位數 0.98(0.89 0.98 0.98 0.96 0.98 0.99)・總位移 1.66m"
+    },
+    {
+      "name": "V 鍵繞完四個視角回到原點",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "按 F 真的跳起來",
+      "pass": true,
+      "detail": "髖部 0.638 → 最高 1.163 m(+0.525)"
+    },
+    {
+      "name": "出拳有揮出去(swing)",
+      "pass": true,
+      "detail": "4 次"
+    },
+    {
+      "name": "★ 拳頭真的打到人(hit)",
+      "pass": true,
+      "detail": "1 次・事件流 swing,grab,hit"
+    },
+    {
+      "name": "有人掉下台就結算(fall 事件 + 換狀態)",
+      "pass": true,
+      "detail": "state=roundEnd・一號 得分!"
+    },
+    {
+      "name": "結算訊息看得到",
+      "pass": true,
+      "detail": "一號 得分!"
+    },
+    {
+      "name": "比分有跳",
+      "pass": true,
+      "detail": "一號 1 / 二號 0"
+    },
+    {
+      "name": "掉台後會自己開下一回合",
+      "pass": true,
+      "detail": "進到第 2 回合"
+    },
+    {
+      "name": "打得完一場(matchEnd)",
+      "pass": true,
+      "detail": "state=matchEnd"
+    },
+    {
+      "name": "「再來一場」鈕在比賽結束時出現",
+      "pass": true,
+      "detail": "高 49px"
+    },
+    {
+      "name": "返回大廳鈕(game-must-haves ④)",
+      "pass": false,
+      "detail": "結算畫面找不到返回大廳"
+    },
+    {
+      "name": "再來一場真的重開",
+      "pass": true,
+      "detail": "round=1"
+    },
+    {
+      "name": "直向有虛擬搖桿(手機玩得動)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "直向有「請轉橫向」提示(force-landscape-pwa)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "manifest 鎖橫向",
+      "pass": true,
+      "detail": "orientation=landscape"
+    },
+    {
+      "name": "直向沒有橫向溢出",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": ".shots-live\\01-menu.png",
+      "kb": 74.7
+    },
+    {
+      "file": ".shots-live\\02-fight-start.png",
+      "kb": 71.8
+    },
+    {
+      "file": ".shots-live\\03-view-0-fixed.png",
+      "kb": 74.5
+    },
+    {
+      "file": ".shots-live\\04-view-1-side.png",
+      "kb": 63.8
+    },
+    {
+      "file": ".shots-live\\05-view-2-top.png",
+      "kb": 64.1
+    },
+    {
+      "file": ".shots-live\\06-view-3-chase.png",
+      "kb": 56.1
+    },
+    {
+      "file": ".shots-live\\07-brawl.png",
+      "kb": 58.1
+    },
+    {
+      "file": ".shots-live\\08-round-end.png",
+      "kb": 62.5
+    },
+    {
+      "file": ".shots-live\\09-match-end.png",
+      "kb": 72
+    },
+    {
+      "file": ".shots-live\\10-portrait-390x844.png",
+      "kb": 24.8
+    }
+  ]
+}

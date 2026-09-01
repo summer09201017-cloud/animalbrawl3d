@@ -64,56 +64,39 @@ async function advance(s) {
     t0 + s, { timeout: 60000, polling: 60 },
   );
 }
-/** 按住某鍵讓遊戲跑 s 秒(真鍵盤事件),回傳期間位移與 NDC 變化 */
-async function holdFor(code, s) {
-  const before = await page.evaluate(() => ({ w: window.__chest(0), n: window.__proj0() }));
-  await page.keyboard.down(code);
-  await advance(s);
-  await page.keyboard.up(code);
-  const after = await page.evaluate(() => ({ w: window.__chest(0), n: window.__proj0() }));
-  return { before, after };
-}
-/** 量一個方向鍵:按過去、再按回來抵銷,免得驗到後面自己走下台。
- *  ⚠⚠ 第一版就是漏了「按回來」:台子半徑 3.6,四個視角各按 D 0.75 秒(每次走 1.5~1.8 m)
- *     ⇒ 一號自己走進虛空(髖部 y=-245 m),之後「跳不起來/出不了拳/框不住」全部變紅。
- *     那 6 條紅燈**沒有一條是產品的錯**,全是驗法把角色推下台。
- *     ⇒ 同 canvas-playwright-verify:紅了先問「是不是我的驗法」。 */
-async function measureKey(code, back, s = 0.5) {
-  const run = await holdFor(code, s);
-  await page.keyboard.down(back); await advance(s * 1.05); await page.keyboard.up(back);
-  await advance(0.25);
-  const cam = await page.evaluate(() => window.__camFwd());
-  const wx = run.after.w.x - run.before.w.x, wz = run.after.w.z - run.before.w.z;
-  const m = Math.hypot(wx, wz);
-  return {
-    dx: run.after.n.x - run.before.n.x,
-    dy: run.after.n.y - run.before.n.y,
-    m,
-    fwd: m > 1e-4 ? (wx * cam.x + wz * cam.z) / m : 0,   // 位移方向 vs「鏡頭前方」的餘弦
-  };
-}
-/** 按住前進鍵,**逐小段**比對「這一段的位移」與「這一段當下的鏡頭前方」,回傳中位數。
- *  會轉的鏡頭(跟隨視角)只有這樣量才有意義 —— 見 view 迴圈裡那條註解。*/
-async function measureForward(code, back, s = 0.6, n = 6) {
+/** 按住一個方向鍵,**逐小段**比對「這一段的位移」與「這一段開始時的鏡頭軸」,回中位數。
+ *  回傳 { fwd, right, m }:fwd/right 各是「位移 vs 鏡頭前方 / 鏡頭右方」的餘弦中位數。
+ *
+ *  ★★ 為什麼一定要逐段、而且用「該段開始時」的鏡頭軸(0901 踩了三次才寫對):
+ *    「跟隨(會轉)」視角的鏡頭黏在角色背後,角色一轉身鏡頭就繞過去(還有 0.3 秒 lerp 落後)。
+ *    我原本「動完再取一次鏡頭方向」去比整段位移 —— 前後那條本機第一輪 +1.00、第二輪 -0.97;
+ *    左右那條本機綠、**線上**翻成 -0.05。三次都不是遊戲壞了,是量法本身會翻號。
+ *  ⚠ 還要「按回來」抵銷位移:第一版沒抵銷,台子半徑 3.6 而每個視角按 D 走 1.5~1.8 m
+ *    ⇒ 驗收自己把角色走進虛空(髖部 y=-245 m),之後 6 條全紅、而且長得跟真 bug 一樣。 */
+async function measureMove(code, back, s = 0.6, n = 6) {
   const seg = s / n;
-  const samples = [];
-  let x0 = await page.evaluate(() => ({ p: window.__chest(0), f: window.__camFwd() }));
+  const fwdS = [], rightS = [];
+  const probe = () => ({ p: window.__chest(0), f: window.__camFwd(), r: window.__camRight() });
+  let x0 = await page.evaluate(probe);
   await page.keyboard.down(code);
   let total = 0;
   for (let i = 0; i < n; i++) {
     await advance(seg);
-    const x1 = await page.evaluate(() => ({ p: window.__chest(0), f: window.__camFwd() }));
+    const x1 = await page.evaluate(probe);
     const dx = x1.p.x - x0.p.x, dz = x1.p.z - x0.p.z;
     const m = Math.hypot(dx, dz);
     total += m;
-    if (m > 0.01) samples.push((dx * x0.f.x + dz * x0.f.z) / m);   // 用**這一段開始時**的鏡頭方向
+    if (m > 0.01) {
+      fwdS.push((dx * x0.f.x + dz * x0.f.z) / m);
+      rightS.push((dx * x0.r.x + dz * x0.r.z) / m);
+    }
     x0 = x1;
   }
   await page.keyboard.up(code);
   await page.keyboard.down(back); await advance(s * 1.05); await page.keyboard.up(back);
   await advance(0.25);
-  const sorted = [...samples].sort((a, b) => a - b);
-  return { median: sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0, samples, m: total };
+  const med = (a) => { const q = [...a].sort((u, v) => u - v); return q.length ? q[Math.floor(q.length / 2)] : 0; };
+  return { fwd: med(fwdS), right: med(rightS), fwdS, rightS, m: total };
 }
 
 /** 驗收前確認一號**真的站在台面上**;不是就重開一場(不然後面全是假紅)
@@ -185,13 +168,20 @@ await page.evaluate(() => {
     if (!c[3]) return null;
     return { x: c[0] / c[3], y: c[1] / c[3] };
   };
-  window.__proj0 = () => { const p = window.__chest(0); return window.__proj(p.x, p.y, p.z); };
   window.__camOK = () => { const p = g.camera.position; return Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z); };
-  /* 鏡頭的水平前方向(matrixWorld 的第三欄取負 = three 的 forward)*/
+  /* 鏡頭的水平前方向(matrixWorld 第三欄取負 = three 的 forward)*/
   window.__camFwd = () => {
     const m = g.camera.matrixWorld.elements;
     const fx = -m[8], fz = -m[10], l = Math.hypot(fx, fz) || 1;
     return { x: fx / l, z: fz / l };
+  };
+  /* 鏡頭的水平右方向(matrixWorld 第一欄 = 螢幕右)。
+     ★ 用它而不是「畫面像素差」來驗左右:高空俯瞰的像素差極小、跟隨視角的像素差會翻號。
+     這一欄在四個視角都對(含把 up 改成場地軸的俯瞰視角)。*/
+  window.__camRight = () => {
+    const m = g.camera.matrixWorld.elements;
+    const rx = m[0], rz = m[2], l = Math.hypot(rx, rz) || 1;
+    return { x: rx / l, z: rz / l };
   };
   /* 「看不看得見」而不是「資料對不對」—— 祖先 display:none 時 getComputedStyle
      照樣拿得到字級,所以驗字級會是**假綠燈**(0901 我自己踩了這一條)。*/
@@ -257,12 +247,12 @@ for (let v = 0; v < 4; v++) {
   ok(`${name}:兩隻都框得住`, inFrame, framed.map((p) => p ? `(${p.x.toFixed(2)},${p.y.toFixed(2)})` : 'null').join(' '));
 
   await ensureAlive(`${name} 量測前`);
-  /* 驗的是**方向(正負號)**,不是幅度:高空俯瞰在 14 公尺上方,
-     走 0.42 公尺在畫面上只有 +0.004 —— 拿固定幅度門檻(0.01)去卡它會假紅。
-     ⇒ 條件寫成「真的走了一段(≥0.2 m)且畫面往右」。*/
-  const rt = await measureKey('KeyD', 'KeyA');
-  ok(`${name}:按 D 真的往畫面右移`, rt.m >= 0.2 && rt.dx > 0,
-    `畫面 x ${rt.dx >= 0 ? '+' : ''}${rt.dx.toFixed(4)}・世界位移 ${rt.m.toFixed(2)}m`);
+  /* 驗的是**方向**,不是幅度 —— 而且用「鏡頭的右向量」而不是畫面像素差:
+     高空俯瞰在 14 公尺上方,走 0.42 m 在畫面上只有 +0.004(拿幅度門檻卡它會假紅);
+     跟隨視角的鏡頭又會轉(拿前後兩點的畫面差會翻號)。兩個毛病一次解掉。*/
+  const rt = await measureMove('KeyD', 'KeyA');
+  ok(`${name}:按 D 真的往畫面右走`, rt.right > 0.3,
+    `逐幀餘弦中位數 ${rt.right.toFixed(2)}(${rt.rightS.map((v) => v.toFixed(2)).join(' ')})・總位移 ${rt.m.toFixed(2)}m`);
   /* ★★ 會轉的鏡頭要**逐幀**比,不能「動完再取一次鏡頭方向」:
        跟隨視角的鏡頭黏在角色背後,角色一轉身鏡頭就繞過去(還有 0.3 秒的 lerp 落後)。
        同一段驗收碼第一輪量到 +1.00、第二輪 -0.97 —— 不是遊戲壞了,是我在拿
@@ -272,9 +262,9 @@ for (let v = 0; v < 4; v++) {
        所以「往前」在畫面上幾乎不動(是世界往後退)⇒ 拿畫面 y 去驗前後,
        在跟隨視角必然假紅(第一版就紅在這裡,我差點去改產品)。
        使用者真正在意的那句話是「按 W 會往我看的方向走」= 與鏡頭前方同向。*/
-  const fw = await measureForward('KeyW', 'KeyS');
-  ok(`${name}:按 W 真的往鏡頭前方走`, fw.median > 0.3,
-    `逐幀餘弦中位數 ${fw.median.toFixed(2)}(${fw.samples.map((v) => v.toFixed(2)).join(' ')})・總位移 ${fw.m.toFixed(2)}m`);
+  const fw = await measureMove('KeyW', 'KeyS');
+  ok(`${name}:按 W 真的往鏡頭前方走`, fw.fwd > 0.3,
+    `逐幀餘弦中位數 ${fw.fwd.toFixed(2)}(${fw.fwdS.map((v) => v.toFixed(2)).join(' ')})・總位移 ${fw.m.toFixed(2)}m`);
 
   await shot(`view-${idx}-${['fixed', 'side', 'top', 'chase'][idx]}`);
   await page.keyboard.press('KeyV');
@@ -286,11 +276,28 @@ ok('V 鍵繞完四個視角回到原點', (await page.evaluate(() => window.__br
 console.log('\n── 手感 ──');
 for (let i = 0; i < 3 && !(await ensureAlive('手感段')); i++) { /* 站穩了才量跳躍 */ }
 await advance(0.5);
-const standY = await page.evaluate(() => window.__pelvisY(0));
-await page.keyboard.press('KeyF');
-let peak = standY;
-for (let i = 0; i < 8; i++) { await advance(0.09); peak = Math.max(peak, await page.evaluate(() => window.__pelvisY(0))); }
-ok('按 F 真的跳起來', peak - standY > 0.12, `髖部 ${standY.toFixed(3)} → 最高 ${peak.toFixed(3)} m(+${(peak - standY).toFixed(3)})`);
+/* ★ jump() 有三道閘門(冷卻 0.45s / 被打暈 hp<0.6 / 必須著地)。
+   「按下去那一刻剛好在踏步的半空」⇒ 這一下被拒,而畫面上什麼都不會發生。
+   ⇒ 先等到「可以跳」再按真鍵盤,再用引擎確認**這一下被接受了**(成功才會把 cd.jump 設成 0.45),
+     被拒就重試。不這樣做,這條會偶發假紅(0901 實際紅過一次:0.634 → 0.640)。*/
+let jumped = false, standY = 0, peak = 0;
+for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
+  await page.waitForFunction(() => {
+    const a = window.__brawl.W.animals[0];
+    return a.cd.jump <= 0 && a.hp >= 0.6 ? { ok: 1 } : null;
+  }, null, { timeout: 8000, polling: 60 }).catch(() => { });
+  standY = await page.evaluate(() => window.__pelvisY(0));
+  await page.keyboard.press('KeyF');
+  const accepted = await page.waitForFunction(
+    () => (window.__brawl.W.animals[0].cd.jump > 0 ? { c: 1 } : null), null, { timeout: 1500, polling: 30 },
+  ).then(() => true).catch(() => false);
+  if (!accepted) { note(`按 F 第 ${attempt + 1} 次被拒(那一刻不在著地)⇒ 再試`); await advance(0.45); continue; }
+  jumped = true;
+  peak = standY;
+  for (let i = 0; i < 10; i++) { await advance(0.07); peak = Math.max(peak, await page.evaluate(() => window.__pelvisY(0))); }
+}
+ok('按 F 真的跳起來', jumped && peak - standY > 0.12,
+  jumped ? `髖部 ${standY.toFixed(3)} → 最高 ${peak.toFixed(3)} m(+${(peak - standY).toFixed(3)})` : '五次都在半空,按不到著地那一刻');
 
 /* 走過去打人:AI 恢復,靠近到 1 公尺內再連續出拳(拳是持續施力,要按著打)
    ★ 事件用「起點索引」切,不要 `__ev.length = 0` 清掉 ——
