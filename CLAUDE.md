@@ -11,8 +11,10 @@
 ## 現況(2026-09-01・v1.3,已上線、已進大廳)
 
 - `node test/all.mjs` → **119 過 / 0 失敗 🟢**(physics 50 / rules 47 / smoke 22)
-- `node scripts/browser-verify.mjs` → **52 過 / 0 失敗 🟢**(真 Chromium + 真 WebGL,截圖存 `.shots/`;
-  本機與線上同一支跑,連跑兩輪一致)
+- `npm run verify` → **52 過 / 0 失敗 🟢**(🔬 全套,約 155 秒;真 Chromium + 真 WebGL,截圖存 `.shots/`;
+  本機與線上同一支跑)
+- `npm run verify:quick` → **30 過 / 0 失敗 🟢**(⚡ 快檢,約 21 秒;日常改一行時跑這個。
+  跳過四視角逐幀方向量測與「走過去把人打到」;**改鏡頭/構圖/輸入後一定要跑全套**)
 - `npm run build` 過:`index` 510 KB(gzip 133)+ `rapier.es` 2.06 MB(**gzip 762 KB**)
 - 線上:CF Pages `hfpc-animalbrawl3d` → https://hfpc-animalbrawl3d.pages.dev
 - 大廳:總入口「經典街機合輯」第 5 張卡(`hfpc-bible-games` 的 `src/data.js`,新 kind `brawl`)
@@ -96,12 +98,11 @@
 
 ## 還沒做(roadmap.md 有完整清單)
 
-- ✅ 真瀏覽器玩一輪 + 截圖驗收(0901;`node scripts/browser-verify.mjs`,需先 `npm run dev`)
+- ✅ 真瀏覽器玩一輪 + 截圖驗收(0901;`npm run verify`,需先 `npm run dev`)
 - ✅ 建 GitHub repo + 部署 CF Pages(0901)
 - ✅ 返回大廳鈕 + 進大廳「經典街機合輯」卡片(0901)
 - ✅ 使用統計三層打點(0901)
-- 🟠 下一件見 roadmap 第 1 列(3~4 人同場)
+- 🟠 **下一件 = roadmap 第 1 列:3~4 人同場**(物理層的 `addAnimal` 本來就吃 N 隻;
+  要改的是規則層誰得分、HUD 版面、出生點分佈、鏡頭要框得住所有人)
+- 🟠 場地機關(會塌的邊緣、移動平台、彈跳墊)—— 這型遊戲的耐玩度幾乎全在關卡
 - 🟠 語音播報(一律走 [[baked-voice-commentary]] 烤 mp3,**不可以**用瀏覽器內建語音)
-- 🟠 3~4 人同場(物理層的 `addAnimal` 本來就支援 N 隻,規則層與 HUD 要跟上)
-- 🟠 場地機關(會塌的邊緣、移動平台、彈跳墊)
-- 🟠 進大廳卡片(街機合輯)

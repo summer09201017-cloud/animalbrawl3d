@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/all.mjs"
+    "test": "node test/all.mjs",
+    "verify": "node scripts/browser-verify.mjs",
+    "verify:quick": "node scripts/browser-verify.mjs --quick"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",

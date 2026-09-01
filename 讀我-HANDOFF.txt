@@ -6,8 +6,9 @@
 ═══════════════════════════════════════════════════════════════
   1. cd Downloads/hfpc-git/animalbrawl3d && npm install
   2. node test/all.mjs   → 應該是 119 過 / 0 失敗 🟢(約 1 分鐘)
-  3. npm run dev,另一個視窗 node scripts/browser-verify.mjs
-     → 應該是 42 過 / 1 待辦(那 1 個是「返回大廳鈕」,見下面待做)
+  3. npm run dev,另一個視窗:
+       npm run verify:quick  → ⚡ 約 21 秒,應該 30 過 / 0 失敗(日常用這個)
+       npm run verify        → 🔬 約 155 秒,應該 52 過 / 0 失敗(上線前、改鏡頭或輸入後用這個)
   4. 讀 CLAUDE.md 的「建構期間真的踩過的坑」那張表(14 條,每條都有對應測試)
   5. 讀 roadmap.md 的「🔜 待做」第 1 列 —— 那是下一步
 
@@ -35,7 +36,7 @@
 ★ 現況(v1.3・已上線、已進大廳)
 ═══════════════════════════════════════════════════════════════
   測試:119 過 / 0 失敗(physics 50 真 Rapier / rules 47 假 renderer / smoke 22 含兩道靜態守門)
-  真瀏覽器:52 過 / 0 失敗(node scripts/browser-verify.mjs,截圖存 .shots/ 不入庫;
+  真瀏覽器:全套 52 過 / 0 失敗、快檢 30 過 / 0 失敗(npm run verify / verify:quick,截圖存 .shots/ 不入庫;
             本機與線上同一支跑,連跑兩輪一致)
   建置:npm run build 過。index 510 KB(gzip 133)+ rapier.es 2.06 MB(gzip 762 KB)
   上線:CF Pages 專案 hfpc-animalbrawl3d → https://hfpc-animalbrawl3d.pages.dev

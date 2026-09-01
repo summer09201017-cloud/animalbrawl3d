@@ -9,9 +9,10 @@
  * 那些只有真瀏覽器 + 眼睛看得出來。截圖存 .shots/(不入庫)。
  *
  * 跑法:  npm run dev            # 另一個視窗
- *         node scripts/browser-verify.mjs
- *         URL=http://localhost:4173/ node scripts/browser-verify.mjs   # 驗 build 後
- *         HEADED=1 node scripts/browser-verify.mjs                     # 想自己看
+ *         npm run verify         # 🔬 全套(約 2~3 分鐘;上線前、改鏡頭/構圖/輸入後跑這個)
+ *         npm run verify:quick   # ⚡ 快檢(約 40 秒;日常改一行時跑這個)
+ *         URL=https://... npm run verify        # 驗線上(同一支腳本)
+ *         HEADED=1 npm run verify              # 想自己看畫面
  *
  * ★ 驗法本身的三條鐵則(canvas-playwright-verify 血淚,別拿掉):
  *   1. 等「遊戲時間真的推進」,不要 waitForTimeout —— 無頭 Chromium 沒 GPU,
@@ -26,6 +27,12 @@ import { join } from 'node:path';
 const URL = process.env.URL || 'http://localhost:5173/';
 const OUT = process.env.SHOTS || '.shots';
 const HEADED = process.env.HEADED === '1';
+/* ⚡ 快檢模式(--quick 或 QUICK=1):約 40 秒,日常改一行時用。
+   保留的是「壞掉會讓人玩不下去」那幾項:選單、真 WebGL 跑得動、
+   **HUD 看得見**、預設視角構圖、跳得起來、結算鏈與「再來一場」、返回大廳、手機直向。
+   拿掉的是最貴的那段:四視角 × 逐幀方向量測(那段占全套八成時間)。
+   ⇒ 上線前、改鏡頭/構圖/輸入時一定要跑全套(不帶旗標)。*/
+const QUICK = process.env.QUICK === '1' || process.argv.includes('--quick');
 
 mkdirSync(OUT, { recursive: true });
 
@@ -213,7 +220,8 @@ async function ensureAlive(where) {
   return false;
 }
 
-console.log(`\n🌐 ${URL}\n`);
+const t0 = Date.now();
+console.log(`\n🌐 ${URL}   ${QUICK ? '⚡ 快檢(--quick)' : '🔬 全套'}\n`);
 await page.goto(URL, { waitUntil: 'domcontentloaded' });
 
 /* ── 1. 選單 ─────────────────────────────────────────────────────────── */
@@ -333,12 +341,12 @@ ok('★ 左下角視角提示真的看得見', !vis.vw.hidden, `${vis.vw.w}×${v
    sheepflock3d 0826 血案:固定機位下角色朝鏡頭走來時,他的右手邊在畫面上是左邊。
    ⇒ 驗的不是世界座標,是**畫面座標(NDC)**。
    隔離:先把電腦對手停掉(不然位移是被推的,不是自己走的)。 */
-console.log('\n── 按右是不是往畫面右走(四視角)──');
+console.log(QUICK ? '\n── 預設視角構圖(快檢:只驗固定機位)──' : '\n── 按右是不是往畫面右走(四視角)──');
 await page.evaluate(() => { window.__brawl.cfg.ai[1] = false; });
 await advance(0.4);
 
 const VIEW_NAMES = ['固定機位', '側面轉播', '高空俯瞰', '跟隨'];
-for (let v = 0; v < 4; v++) {
+for (let v = 0; v < (QUICK ? 1 : 4); v++) {
   const idx = await page.evaluate(() => window.__brawl.viewIdx);
   const name = VIEW_NAMES[idx];
   /* ★★ ensureAlive 必須在**所有量測之前** —— 0901 第二次踩:原本它放在方向量測前面、
@@ -411,6 +419,13 @@ for (let v = 0; v < 4; v++) {
   /* ★ 順序講究:框得住 / 角色多大 / 幾朵雲 這三項要在**自然位置**下量(上面已經量完);
      方向測試才由 measureTwice 自己整理場地(挪開對手、回中央)——
      兩件事分開,一條紅燈才指得出一個原因。*/
+  if (QUICK) {
+    /* ⚡ 快檢跳過方向量測(整理場地 + 逐幀取樣 × 2 鍵 × 4 視角 = 全套八成的時間)。
+       ⚠ 改鏡頭、改構圖、改輸入之後**一定要跑全套** —— 那幾條就是專門守這些的。*/
+    note('⚡ 快檢:跳過四視角逐幀方向量測(改鏡頭/輸入後請跑全套)');
+    await shot(`view-${idx}-${['fixed', 'side', 'top', 'chase'][idx]}`);
+    break;
+  }
   const rt = await measureTwice('KeyD', 'KeyA');
   ok(`${name}:按 D 真的往畫面右走`, rt.right > 0.3 && rt.n >= 2,
     `逐幀餘弦中位數 ${rt.right.toFixed(2)}(${rt.rightS.map((v) => v.toFixed(2)).join(' ')})・總位移 ${rt.m.toFixed(2)}m`);
@@ -431,7 +446,7 @@ for (let v = 0; v < 4; v++) {
   await page.keyboard.press('KeyV');
   await page.waitForFunction((prev) => (window.__brawl.viewIdx !== prev ? { v: window.__brawl.viewIdx } : null), idx, { timeout: 10000, polling: 60 });
 }
-ok('V 鍵繞完四個視角回到原點', (await page.evaluate(() => window.__brawl.viewIdx)) === 0);
+if (!QUICK) ok('V 鍵繞完四個視角回到原點', (await page.evaluate(() => window.__brawl.viewIdx)) === 0);
 
 /* ── 4. 手感:跳得起來 / 拳頭打得到 ─────────────────────────────────── */
 console.log('\n── 手感 ──');
@@ -470,7 +485,9 @@ ok('按 F 真的跳起來', jumped && peak - standY > 0.12,
    ★ 事件用「起點索引」切,不要 `__ev.length = 0` 清掉 ——
      第一版清過之後,後面「有沒有 fall 事件」那條就永遠看不到早先發生的掉台 ⇒ 假紅。*/
 const evFrom = await page.evaluate(() => { window.__brawl.cfg.ai[1] = true; return window.__ev.length; });
-for (let round = 0; round < 26; round++) {
+/* ⚡ 快檢跳過「走過去把人打到」那段(要來回走位、最多 26 輪,是第二貴的一段)。
+   跳的是手感,不是「玩不玩得動」—— 揮拳本身在 rules 那 47 項裡有斷言。*/
+for (let round = 0; round < (QUICK ? 0 : 26); round++) {
   const d = await page.evaluate(() => {
     const a = window.__chest(0), b = window.__chest(1);
     return Math.hypot(a.x - b.x, a.z - b.z);
@@ -497,8 +514,12 @@ for (let round = 0; round < 26; round++) {
   await ensureAlive('纏鬥中');   // 掉台就重開繼續打(第一版在這裡 break,只揮了 1 拳就判「打不到」= 假紅)
 }
 const ev = await page.evaluate((from) => window.__ev.slice(from).map((e) => e.type), evFrom);
-ok('出拳有揮出去(swing)', ev.includes('swing'), `${ev.filter((t) => t === 'swing').length} 次`);
-ok('★ 拳頭真的打到人(hit)', ev.includes('hit'), `${ev.filter((t) => t === 'hit').length} 次・事件流 ${[...new Set(ev)].join(',')}`);
+if (QUICK) {
+  note('⚡ 快檢:跳過「走過去把人打到」(揮拳/命中在 rules 那 47 項裡有斷言)');
+} else {
+  ok('出拳有揮出去(swing)', ev.includes('swing'), `${ev.filter((t) => t === 'swing').length} 次`);
+  ok('★ 拳頭真的打到人(hit)', ev.includes('hit'), `${ev.filter((t) => t === 'hit').length} 次・事件流 ${[...new Set(ev)].join(',')}`);
+}
 await shot('brawl');
 
 /* ── 5. 掉台 → 回合結算 → 比賽結束 → 再來一場 ───────────────────────── */
@@ -509,6 +530,10 @@ console.log('\n── 掉台與結算 ──');
    ⚠ 不用「等自然纏鬥掉台」:大台子上要等很久,而且誰先掉是隨機的 ⇒ flaky。*/
 await page.evaluate(() => window.__brawl.restart());
 await advance(1.2);
+/* ⚡ 快檢:改成一分制 —— 一次側推就直達 matchEnd,省掉「收第二分」那一輪。
+   要守的真 bug 是「比賽結束後『再來一場』鈕不出現」,那顆鈕只在 matchEnd 出現,
+   所以一分制照樣守得到;全套才走完整的兩分制(順便驗回合遞增)。*/
+if (QUICK) await page.evaluate(() => { window.__brawl.winScore = 1; });
 const evFall = await page.evaluate(() => window.__ev.length);
 async function shoveFoe(why) {
   note(`${why} ⇒ 對二號施一道 60 N·s 側推(與 test G2 同一道力)`);
@@ -531,11 +556,22 @@ ok('結算訊息看得到', !!afterFall.msg, afterFall.msg);
 ok('比分有跳', afterFall.players.some((p) => p.score > 0), afterFall.players.map((p) => `${p.label} ${p.score}`).join(' / '));
 await shot('round-end');
 
-/* 打到比賽結束(2 分制)—— 先等它自己開下一回合,再推第二分 */
+/* 打到比賽結束 —— 先確認它自己開了下一回合,再推第二分。
+   ★★ 斷言要釘**單調遞增的回合數**,不要釘瞬時狀態 `state === 'fight'`:
+     這中間夾了一次截圖(約 1 秒牆上時間),而那一秒內狀態可能已經
+     roundEnd → fight → (又有人掉台) → roundEnd 繞了一圈,
+     poll 剛好只看到 roundEnd ⇒ 報「卡在結算沒有下一回合」= 假紅。
+     `round` 只增不減,所以「round ≥ 2」對競態免疫。
+     (0901 實錄:快檢模式紅過一次,而 20 秒的最小重現證明遊戲 1.5 秒就進第 2 回合。)*/
 const nextRound = await page.waitForFunction(
-  () => (window.__brawl.state === 'fight' ? { r: window.__brawl.round } : null), null, { timeout: 20000, polling: 100 },
+  () => {
+    const g = window.__brawl;
+    return g.round >= 2 || g.state === 'matchEnd' ? { r: g.round, s: g.state } : null;
+  }, null, { timeout: 25000, polling: 100 },
 ).then((h) => h.jsonValue()).catch(() => null);
-ok('掉台後會自己開下一回合', !!nextRound, nextRound ? `進到第 ${nextRound.r} 回合` : '卡在結算沒有下一回合');
+ok('掉台後會自己開下一回合', !!nextRound,
+  nextRound ? (nextRound.s === 'matchEnd' ? `那一分就是致勝分,直接結束(round ${nextRound.r})` : `進到第 ${nextRound.r} 回合`)
+    : '卡在結算,回合數沒有前進');
 let matchOver = false;
 for (let tryN = 0; tryN < 8 && !matchOver; tryN++) {
   const st = await page.evaluate(() => window.__brawl.state);
@@ -613,7 +649,9 @@ await browser.close();
 
 const red = checks.filter((c) => !c.pass);
 console.log('\n══════════════════════════════════════════════════════════');
-console.log(`總計:${checks.length - red.length} 過 / ${red.length} 失敗`);
+console.log(`總計:${checks.length - red.length} 過 / ${red.length} 失敗`
+  + `　(${QUICK ? '⚡ 快檢' : '🔬 全套'}・${((Date.now() - t0) / 1000).toFixed(0)} 秒)`);
+if (QUICK) console.log('⚠ 快檢跳過了四視角逐幀方向量測 —— 改鏡頭/構圖/輸入之後請跑全套(不帶 --quick)');
 if (errors.length) {
   console.log(`\n⚠ 主控台/未捕捉錯誤 ${errors.length} 筆:`);
   for (const e of [...new Set(errors)].slice(0, 12)) console.log(`   ${e}`);
