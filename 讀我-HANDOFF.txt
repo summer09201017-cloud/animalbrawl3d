@@ -102,6 +102,43 @@
     不是「我看起來覺得好一點」。門檻按視角職責分級:固定機位 14%、替代機位 12%、
     俯瞰不套字級門檻(改驗「整個台子框得住」)。
 
+═══════════════════════════════════════════════════════════════
+★ 交接對賬(2026-09-01 17:15,真的問過 git,不是憑印象寫)
+═══════════════════════════════════════════════════════════════
+  ⚠ 這一段存在的理由:0828 那次交接文件寫「已完成、已測、已 commit + push」,
+    而 origin 停在前一版 —— 程式**根本沒被 commit**,867 行只活在工作區,
+    隔天接手的機器 git pull 拿到舊版,而且 git status 全綠、測試全綠、零紅燈。
+    ⇒ 三條指令的輸出照貼,不摘要。
+
+  animalbrawl3d(本專案)
+    git status --short          → (空)
+    git log --oneline -1        → 924ce48 📖 README 對齊實況(交接前四份文件對照)
+    git rev-list --count @{u}..HEAD → 0   ← 真的推上去了
+    remote: https://github.com/summer09201017-cloud/animalbrawl3d (public, master)
+
+  hfpc-bible-games(大廳,本輪加了一張卡)
+    git status --short          → (空)
+    git log --oneline -1        → e619f9d 📝 大廳 CLAUDE.md:補記毛毛大亂鬥 + 修正脫節的現況行
+    git rev-list --count @{u}..HEAD → 0
+
+  hfpc-claude-skills(skills 合輯,本輪 +1 skill、改 2 支、大表第一百零八版)
+    git status --short          → 只剩未追蹤的 .wrangler/(不是本輪產物,見下面 🔴)
+    git log --oneline -1        → e26f159 📋 大表第一百零八版:毛毛大亂鬥上線+進大廳
+    git rev-list --count @{u}..HEAD → 0
+
+  🔴 留給下一手的一件事:skills repo 根目錄有未追蹤的 `.wrangler/`,而 `.gitignore` 沒擋它。
+     `wrangler --assets` 掃的是**磁碟**不是 git ⇒ 建議補進 `.gitignore` 與 `.assetsignore`
+     (兩行:名稱 + 名稱/**)。我沒動它,因為它不是本輪產的。
+
+═══════════════════════════════════════════════════════════════
+★ 本輪(0901 第二場)沉澱出去的跨專案資產
+═══════════════════════════════════════════════════════════════
+  🆕 skill physics-headless-boundary —— 物理層不准 import 渲染層,否則 headless 測試靜默失效
+  ✏ skill canvas-playwright-verify —— 補「驗收腳本不可以弄壞受測對象」七個自傷 + 兩檔驗收
+  ✏ skill manual-deploy-map —— 補登 animalbrawl3d,並補上**大表聲稱補了卻沒補**的 golf3d(74 站)
+  🧠 記憶三條 —— 驗收迴圈要縮範圍(★同日犯兩次)/ 驗收不可以弄壞受測對象 / 調數值前先算
+  ⚠ 新指令與新註冊的 hook 要**下個 session** 才生效;skill 內容當場生效。
+
 ■ ⏩ 進行中:無。
 ■ ➡ 下一件:roadmap 第 1 列 = 3~4 人同場(物理層的 addAnimal 本來就吃 N 隻,
    要改的是規則層誰得分、HUD 版面、出生點分佈、鏡頭要框得住所有人)。
