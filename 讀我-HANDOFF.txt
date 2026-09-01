@@ -109,6 +109,8 @@
     而 origin 停在前一版 —— 程式**根本沒被 commit**,867 行只活在工作區,
     隔天接手的機器 git pull 拿到舊版,而且 git status 全綠、測試全綠、零紅燈。
     ⇒ 三條指令的輸出照貼,不摘要。
+  ℹ 下面 animalbrawl3d 的 hash 是寫這一段的那一刻;**這一段本身會成為下一顆 commit**,
+    所以實際 HEAD 會比表上多一顆(那不是 drift)。真正要看的是 **status 空** 與 **未推 = 0**。
 
   animalbrawl3d(本專案)
     git status --short          → (空)
