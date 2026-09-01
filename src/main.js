@@ -5,6 +5,12 @@ import { Audio } from './audio.js';
 
 const $ = id => document.getElementById(id);
 const audio = new Audio();
+
+/* ⑦ 版本號 + 新增功能簡歷(game-must-haves):選單上看得到「這是第幾版、這一版多了什麼」。
+   老師/使用者才分得出手上的是不是新版,回報問題時也講得出版本。
+   ★ 改了會上線的東西 ⇒ 這兩行與 public/sw.js 的 CACHE **一起** bump。*/
+const VER = 'v1.1';
+const VER_NOTES = '物理布娃娃互推・四種動物・四視角・同機兩人或對電腦｜v1.1:修好 HUD 與「再來一場」不顯示';
 let game = null, raf = 0, last = 0;
 
 /* ── 鍵盤配置(同機兩人)。★ 3d-game-kit §3「量值可調」:鍵位也印在畫面上,
@@ -64,7 +70,12 @@ function loop(t) {
   game.render();
   const h = game.hud();
   $('hud').innerHTML = hudHTML(h);
-  $('again').style.display = h.state === 'matchEnd' ? '' : 'none';
+  /* ⚠⚠ 不可以寫 `style.display = ''` —— 那是「清掉 inline 樣式、回到 CSS 的預設」,
+       而 #again 在 CSS 裡的預設正是 `display:none` ⇒ 鈕永遠不會出現。
+       (0901 真瀏覽器驗收抓到:比賽結束後鈕高 0px。平板沒有實體鍵盤按不到 R,
+        比賽一結束就卡死,而 headless 測試看的是 hud() 的資料、一路全綠。)
+       ⇒ 顯示一律給**明確值**。同族的 #hud 見 start()。*/
+  $('again').style.display = h.state === 'matchEnd' ? 'block' : 'none';
 }
 
 function resize() {
@@ -74,7 +85,7 @@ function resize() {
 
 async function start(cfg) {
   $('menu').style.display = 'none';
-  $('hud').style.display = '';
+  $('hud').style.display = 'block';        // ★ 不是 ''(CSS 預設是 none,見 loop() 那條註解)
   game = new Game($('cv'), {
     winScore: cfg.winScore,
     onEvent: e => {
@@ -114,7 +125,8 @@ function buildMenu() {
     </div>
     <button id="go" class="go">開始!</button>
     <div class="keys">${KEYS.map((k, i) => `<div><b style="color:${TEAM[i].css}">${TEAM[i].label}</b> ${k.show}</div>`).join('')}
-      <div class="dim">V 切換視角 · R 重新開始 · 手機請用畫面下方的按鈕</div></div>`;
+      <div class="dim">V 切換視角 · R 重新開始 · 手機請用畫面下方的按鈕</div>
+      <div class="ver">${VER} · ${VER_NOTES}</div></div>`;
   $('go').onclick = () => start({
     kinds: [$('k0').value, $('k1').value],
     ai: [$('ai0').checked, $('ai1').checked],

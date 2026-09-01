@@ -8,12 +8,23 @@
 - 主題:**純娛樂**(使用者 0828 拍板)—— 不接經文、不綁聖經故事,進「街機合輯」分類
 - 技術:Vite + three + **@dimforge/rapier3d-compat**,零後端、離線可玩、PWA
 
-## 現況(2026-08-28・v1,**本機完工、尚未上線**)
+## 現況(2026-09-01・v1.1,已過真瀏覽器驗收、已上線)
 
-- `node test/all.mjs` → **98 過 / 0 失敗 🟢**(physics 40 / rules 43 / smoke 15)
-- `npm run build` 過:`index` 505 KB(gzip 131)+ `rapier.es` 2.06 MB(**gzip 762 KB**)
-- 🔴 **還沒建 GitHub repo、還沒部署** —— 那兩件是對外動作,等使用者拍板
-- 🔴 **還沒在真瀏覽器玩過**(headless 全綠,但手感、臉朝哪、鏡頭好不好看只有眼睛判得出來)
+- `node test/all.mjs` → **119 過 / 0 失敗 🟢**(physics 50 / rules 47 / smoke 22)
+- `node scripts/browser-verify.mjs` → **42 過 / 1 待辦 🟢**(真 Chromium + 真 WebGL,截圖存 `.shots/`)
+- `npm run build` 過:`index` 507 KB(gzip 132)+ `rapier.es` 2.06 MB(**gzip 762 KB**)
+- 🟠 唯一紅燈:**沒有返回大廳鈕** —— 併到 roadmap 第 3 列(進街機合輯)一起做,那時才有大廳網址
+
+### 0901 真瀏覽器驗收抓到、headless 抓不到的兩個(都已修)
+
+| 症狀 | 病根 | 為什麼 headless 全綠 |
+|---|---|---|
+| **HUD 整組不顯示**(比分/回合訊息/視角提示全都看不到) | `#hud` 在 CSS 是 `display:none`,`main.js` 把 display 指派成**空字串**想「恢復顯示」⇒ 清掉 inline 樣式後回落到 CSS 的 none | 測試讀的是 `game.hud()` 那個**物件**,它永遠是對的;連 `getComputedStyle` 拿字級也拿得到(祖先 `display:none` 不影響 font-size)⇒ **假綠燈** |
+| **比賽結束後「再來一場」鈕不出現**(高 0px) | 同一個病根(`#again` 也是 CSS `display:none`) | 同上。而且平板沒有實體鍵盤按不到 `R` ⇒ **一場打完就卡死** |
+
+⇒ 已補**靜態守門**(`test/smoke.mjs` 最後一段):CSS 裡藏起來的 id,JS 不准用空字串去顯示。
+   全域也有同族 hook `css-hidden-toggle-guard`(#25,尋羊記血案),但那支只在「AI 動到檔案」時響;
+   repo 內的測試每次 `npm test` 都跑,兩層互補。
 
 ## 為什麼選 rapier3d-**compat**(不是 rapier3d,也不是 cannon-es)
 
@@ -44,6 +55,9 @@
 | 11 | AI 偶爾自己走下台 | 12 次跑測試紅 1 次 | **flaky 測試比沒測試更糟**:紅一次沒人查、綠一次就以為好了 | E2(+ 測試用固定種子 LCG) |
 | 12 | `sw.js`/`icon.svg`/`manifest` 放在 **repo 根目錄** | vite 只複製 `public/` ⇒ 三個檔都沒進 dist ⇒ **上線後 SW 與圖示 404**、裝不到主畫面、離線打不開 | 本機 dev 一切正常(dev server 服務根目錄),首頁看起來也正常 | smoke 的 PWA 段 |
 
+| 13 | CSS 藏起來的元素,JS 把 `display` 指派成**空字串**想顯示它 | HUD 整組隱形、結算鈕高 0px | **測試全綠**:資料物件永遠對,錯的是「看不看得見」 | smoke 最後一段(靜態) |
+| 14 | 驗收腳本自己把角色走下台 / 門檻對錯了對象 | 12 條紅燈裡有 6 條是假的(跳不起來、打不到人、框不住) | 假紅**長得跟真 bug 一模一樣**:第一輪我差點去改產品。真兇是「台子半徑 3.6,而我每個視角按 D 走 1.5~1.8 m」與「站姿髖部 0.64,而我判活著的門檻寫 `y > -1`」 | 驗收腳本內的 `ensureAlive`/`measureForward` |
+
 ★★ 這張表最值得記住的一條:**#10**。我在那裡連續做了四次「調參數/加一層力」,
 每一次都讓另一項變紅 —— 那是「問題不在參數」的訊號。改結構之後一次全綠。
 ⇒ **同一個地方調第三次還過不了,就該懷疑結構,不要繼續轉旋鈕。**
@@ -68,8 +82,9 @@
 
 ## 還沒做(roadmap.md 有完整清單)
 
-- 🔴 真瀏覽器玩一輪、截圖看臉朝哪 / 鏡頭好不好看 / 手感
-- 🔴 建 GitHub repo + 部署(CF Pages;新站一律 CF,見 `manual-deploy-map`)
+- ✅ 真瀏覽器玩一輪 + 截圖驗收(0901;`node scripts/browser-verify.mjs`,需先 `npm run dev`)
+- ✅ 建 GitHub repo + 部署 CF Pages(0901)
+- 🔴 返回大廳鈕 + 進大廳卡片(街機合輯)—— 兩件一起做
 - 🟠 語音播報(一律走 [[baked-voice-commentary]] 烤 mp3,**不可以**用瀏覽器內建語音)
 - 🟠 3~4 人同場(物理層的 `addAnimal` 本來就支援 N 隻,規則層與 HUD 要跟上)
 - 🟠 場地機關(會塌的邊緣、移動平台、彈跳墊)

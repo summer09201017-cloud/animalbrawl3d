@@ -32,6 +32,22 @@
   .go:active{transform:translateY(3px);box-shadow:0 2px 0 #d2664a}
   .keys{margin-top:10px;font-size:13px;line-height:1.9;text-align:center;opacity:.9}
   .keys .dim{opacity:.66;font-size:12.5px}
+  .keys .ver{margin-top:6px;opacity:.6;font-size:12px;max-width:min(430px,94vw)}
+
+  /* ── 直向蓋版:請轉橫向(force-landscape-pwa)──────────────────────────
+     manifest 雖然寫了 orientation:landscape,但那只在「已安裝的 PWA」生效;
+     從 LINE / Chrome 直接點連結進來的手機是直向的,而直向看不到整個台子。
+     ⇒ 窄螢幕 + 直向才蓋版,桌機與橫向完全不受影響。
+     ★ 這一段刻意**不由 JS 控制** —— 純 CSS media query 開關,
+       就不會再犯 `style.display=''` 回落成 none 的那個坑。*/
+  #rotate{display:none}
+  @media (orientation:portrait) and (max-width:820px){
+    #rotate{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:26px;
+      background:linear-gradient(#a8e0f7,#dff3d8);text-align:center}
+    #rotate .big{font-size:clamp(20px,6vw,28px);font-weight:900;line-height:1.7}
+    #rotate .em{font-size:44px;display:block;margin-bottom:8px}
+    #rotate .sub{display:block;margin-top:12px;font-size:14px;font-weight:600;opacity:.75}
+  }
 
   /* ── HUD ── */
   #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:10}
@@ -80,6 +96,8 @@
   </div>
 </div>
 <div id="menu"></div>
+<div id="rotate"><div class="big"><span class="em">📱↻</span>請把手機轉成<u>橫向</u>再玩
+  <span class="sub">橫的畫面才看得到整個台子與兩隻動物</span></div></div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
