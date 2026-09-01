@@ -34,6 +34,18 @@
   .keys .dim{opacity:.66;font-size:12.5px}
   .keys .ver{margin-top:6px;opacity:.6;font-size:12px;max-width:min(430px,94vw)}
 
+  /* ── 返回大廳(back-to-lobby-button)────────────────────────────────────
+     左上角固定位置、安全區內、≥44px 觸控;DOM 疊在上層而**不畫進 canvas**
+     (畫進去會被遊戲迴圈重繪蓋掉,而且命中區要自己算)。
+     z-index 30:壓在選單(20)之上,但在直向蓋版(40)之下 ——
+     叫人轉橫向的時候不需要還看到這顆。*/
+  #lobby{position:fixed;top:calc(8px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));
+    z-index:30;min-width:44px;min-height:44px;padding:9px 14px;border:0;border-radius:12px;
+    font:inherit;font-size:15px;font-weight:800;background:rgba(32,38,46,.58);color:#fff;cursor:pointer;
+    -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+  #lobby:hover{background:rgba(32,38,46,.76)}
+  #lobby:active{transform:translateY(1px)}
+
   /* ── 直向蓋版:請轉橫向(force-landscape-pwa)──────────────────────────
      manifest 雖然寫了 orientation:landscape,但那只在「已安裝的 PWA」生效;
      從 LINE / Chrome 直接點連結進來的手機是直向的,而直向看不到整個台子。
@@ -59,7 +71,9 @@
   .pl .ai{margin-left:5px;font-size:11px;background:#e6e0d2;border-radius:6px;padding:1px 5px;color:#5a5346}
   .pl .sc{font-size:19px;letter-spacing:2px;color:var(--c);line-height:1.2}
   .pl .st{font-size:12px;min-height:16px;opacity:.85}
-  .mid{position:absolute;top:34%;left:0;right:0;text-align:center}
+  /* 訊息帶在畫面上緣三分之一以內:0901 改了鏡頭構圖之後,角色會落在畫面中央
+     ⇒ 原本 34% 的訊息剛好蓋住角色的臉。移到比分卡下方一點的位置。*/
+  .mid{position:absolute;top:16%;left:0;right:0;text-align:center}
   .msg{display:inline-block;background:rgba(32,38,46,.78);color:#fff;font-size:clamp(16px,4.6vw,26px);
     font-weight:900;padding:9px 20px;border-radius:14px}
   .vw{position:absolute;left:10px;bottom:10px;font-size:12.5px;background:rgba(255,253,248,.85);
@@ -86,6 +100,7 @@
 </head>
 <body>
 <canvas id="cv"></canvas>
+<button id="lobby" aria-label="返回大廳">← 返回大廳</button>
 <div id="hud"></div>
 <button id="again">🔁 再來一場</button>
 <div id="touch">

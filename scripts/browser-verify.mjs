@@ -76,7 +76,14 @@ async function advance(s) {
 async function measureMove(code, back, s = 0.6, n = 6) {
   const seg = s / n;
   const fwdS = [], rightS = [];
-  const probe = () => ({ p: window.__chest(0), f: window.__camFwd(), r: window.__camRight() });
+  let why = '量滿全部分段';
+  const probe = () => {
+    const g = window.__brawl, pv = g.W.animals[0].parts.pelvis.translation();
+    return {
+      p: window.__chest(0), f: window.__camFwd(), r: window.__camRight(),
+      rim: Math.hypot(pv.x, pv.z) / g.cfg.arenaRadius, y: pv.y,
+    };
+  };
   let x0 = await page.evaluate(probe);
   await page.keyboard.down(code);
   let total = 0;
@@ -91,12 +98,98 @@ async function measureMove(code, back, s = 0.6, n = 6) {
       rightS.push((dx * x0.r.x + dz * x0.r.z) / m);
     }
     x0 = x1;
+    /* ★ 快到台緣就收手(0.78 半徑)。0901 實錄:一次量到「總位移 11.12 m」——
+       台子半徑只有 6.5,那不是走路,是**已經飛出去在墜落**;
+       之後那條「按 W」量的就是彈道而不是輸入 ⇒ 假紅。
+       ⇒ 驗收不該把受測對象弄壞;走到邊就停,手上的樣本已經夠算中位數了。*/
+    if (x1.rim > 0.78) { why = `走到台緣(離心 ${x1.rim.toFixed(2)})`; break; }
+    if (x1.y < 0.35) { why = `角色倒了/掉了(髖部 ${x1.y.toFixed(2)})`; break; }
   }
   await page.keyboard.up(code);
-  await page.keyboard.down(back); await advance(s * 1.05); await page.keyboard.up(back);
-  await advance(0.25);
-  const med = (a) => { const q = [...a].sort((u, v) => u - v); return q.length ? q[Math.floor(q.length / 2)] : 0; };
-  return { fwd: med(fwdS), right: med(rightS), fwdS, rightS, m: total };
+  await advance(0.2);
+  /* ⚠⚠ 這裡原本是「按反方向鍵 0.63 秒抵銷位移」—— 一次**盲按、沒有台緣防護**。
+     rAF 爆衝時那一按直接把角色走出台外(離心量到 1.93 倍半徑),
+     於是下一條量測開頭就 break、樣本全空、報 0.00 m ⇒ 一條看起來很像真 bug 的假紅。
+     ⇒ 回中心改用 recenter():它是分段的、每段都檢查離心,不會走過頭。*/
+  await recenter();
+  /* ★ 剔掉第一段:那是「從靜止起步」的過渡 —— 主動布娃娃要先把重心移過去才會走,
+     實測第一段餘弦常是 0.02~0.24,而後面幾段都是 0.97~1.00。
+     ⚠ 但只有樣本 ≥3 才剔,不然會把唯一的證據丟掉。*/
+  const trim = (a) => (a.length >= 3 ? a.slice(1) : a);
+  const med = (a) => { const q = [...trim(a)].sort((u, v) => u - v); return q.length ? q[Math.floor(q.length / 2)] : 0; };
+  return { fwd: med(fwdS), right: med(rightS), fwdS, rightS, m: total, n: fwdS.length, why };
+}
+
+/** 先走回中央再量;樣本不足就再來一次。
+ *  ⚠ 為什麼會樣本不足:無頭 Chromium 的 rAF 是**成串爆發**的,`advance(0.1s)` 之間
+ *    遊戲時間可能一次衝過好幾秒(實測一段量到 7.95 m,那不是 0.1 秒走得完的距離)
+ *    ⇒ 分段長度不精確,角色可能一段就走到台緣、迴圈提早收手只留 1 個樣本。
+ *    方向本身是對的(那次餘弦 0.91),但 1 個樣本證據太薄 ⇒ 重來一次而不是判它紅。 */
+async function measureTwice(code, back) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    /* 每次量測前把場地整理乾淨:①角色在台上且站得起來 ②對手挪開 ③走回中央。
+       ★ 三件都要,而且順序固定 —— ensureAlive 會 restart(對手回到出生點),
+         所以 parkFoe 一定要在它之後。*/
+    for (let i = 0; i < 3 && !(await ensureAlive(`${code} 量測前`)); i++) { /* 站穩再量 */ }
+    await parkFoe();
+    await recenter();
+    const r = await measureMove(code, back);
+    if (r.n >= 2 || attempt === 2) return r;
+    note(`${code} 只取到 ${r.n} 個樣本(${r.why})⇒ 整理場地重量一次`);
+  }
+}
+
+/** 把二號整隻**平移**到台子一側停好,讓方向測試有一片空地。
+ *  ⚠⚠ 為什麼要有這一步(0901 穩定重現的一條紅燈):側面視角量「按 W」時位移 0.00 m。
+ *    不是輸入壞了 —— 是 recenter 之後兩隻站在一起,而**被我關掉 AI 的對手變成一面牆**,
+ *    W 剛好把玩家推進對手身上。真人也推不動(互推就是這遊戲的核心),
+ *    所以那是「驗法把受測項目跟另一件事纏在一起」,不是產品的錯。
+ *  ★ 整隻一起平移(每個部位同一個位移)⇒ 關節相對位置不變,不會把布娃娃撕開;
+ *    順手把速度歸零,免得它帶著動量滑回來。 */
+async function parkFoe() {
+  await page.evaluate(() => {
+    const g = window.__brawl, a = g.W.animals[1];
+    if (!a || a.fellAt != null) return;
+    const R = g.cfg.arenaRadius, p = a.parts.pelvis.translation();
+    const dx = R * 0.62 - p.x, dz = -p.z;
+    for (const k of Object.keys(a.parts)) {
+      const b = a.parts[k], t = b.translation();
+      b.setTranslation({ x: t.x + dx, y: t.y, z: t.z + dz }, true);
+      b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  });
+  await advance(0.6);
+}
+
+/** 用**真鍵盤**把一號走回台子中央附近,量測才不會從台緣起跑(起跑就停 ⇒ 只剩 1 個樣本)。*/
+async function recenter(max = 8) {
+  for (let i = 0; i < max; i++) {
+    const st = await page.evaluate(() => {
+      const g = window.__brawl, pv = g.W.animals[0].parts.pelvis.translation();
+      const rim = Math.hypot(pv.x, pv.z) / g.cfg.arenaRadius;
+      if (rim <= 0.4) return { rim, done: true };
+      /* 已經掉出台外(或倒在台下)就別再用走路救 —— 交給 ensureAlive 重開 */
+      if (rim > 0.95 || pv.y < 0.2) return { rim, done: true };
+      /* 往場中心走:把「角色 → 場中心」換成畫面上的方向,再按對應的鍵 */
+      const me = window.__proj(pv.x, 0.7, pv.z), mid = window.__proj(0, 0.7, 0);
+      if (!me || !mid) return { rim, done: true };
+      return { rim, done: false, dx: mid.x - me.x, dy: mid.y - me.y };
+    });
+    if (st.done) return st.rim;
+    const keys = [];
+    if (Math.abs(st.dx) > 0.02) keys.push(st.dx > 0 ? 'KeyD' : 'KeyA');
+    if (Math.abs(st.dy) > 0.02) keys.push(st.dy > 0 ? 'KeyW' : 'KeyS');
+    if (!keys.length) return st.rim;
+    for (const k of keys) await page.keyboard.down(k);
+    await advance(0.18);          // 短按:rAF 爆衝時一段 0.3 秒可能直接衝過中心到對面
+    for (const k of keys) await page.keyboard.up(k);
+    await advance(0.12);
+  }
+  return (await page.evaluate(() => {
+    const g = window.__brawl, pv = g.W.animals[0].parts.pelvis.translation();
+    return Math.hypot(pv.x, pv.z) / g.cfg.arenaRadius;
+  }));
 }
 
 /** 驗收前確認一號**真的站在台面上**;不是就重開一場(不然後面全是假紅)
@@ -166,7 +259,11 @@ await page.evaluate(() => {
     for (let r = 0; r < 4; r++) t[r] = V[r] * x + V[4 + r] * y + V[8 + r] * z + V[12 + r];
     for (let r = 0; r < 4; r++) c[r] = P[r] * t[0] + P[4 + r] * t[1] + P[8 + r] * t[2] + P[12 + r] * t[3];
     if (!c[3]) return null;
-    return { x: c[0] / c[3], y: c[1] / c[3] };
+    /* ★★ 一定要回報 behind:在**鏡頭後方**的點,clip w 是負的,除下去會把 x/y 翻號
+       ⇒ 一個在背後、其實看不到的東西,算出來的 NDC 可能落在 (-1,1) 裡面
+       ⇒ 「框得住」會給出綠燈,而畫面上根本沒有它。
+       0901 跟隨視角就是這樣:檢查全綠,截圖裡卻看不到對手。*/
+    return { x: c[0] / c[3], y: c[1] / c[3], behind: c[3] < 0 };
   };
   window.__camOK = () => { const p = g.camera.position; return Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z); };
   /* 鏡頭的水平前方向(matrixWorld 第三欄取負 = three 的 forward)*/
@@ -194,6 +291,15 @@ await page.evaluate(() => {
       hidden: r.width === 0 || r.height === 0 || cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0,
     };
   };
+  /* ★ 峰值要在**頁面自己的 rAF** 裡逐幀記,不能從外面每 0.07 秒問一次:
+     無頭 Chromium 的 rAF 成串爆發,一次 advance 可能衝過好幾百毫秒
+     ⇒ 從外面取樣會**直接跳過跳躍的最高點**,量到 +0.083 而不是 +0.52(0901 假紅)。*/
+  window.__peak = { on: false, max: -1e9 };
+  const recPeak = () => {
+    if (window.__peak.on) window.__peak.max = Math.max(window.__peak.max, window.__pelvisY(0));
+    requestAnimationFrame(recPeak);
+  };
+  requestAnimationFrame(recPeak);
   window.__ev = [];
   const orig = g.onEvent.bind(g);
   g.onEvent = (e) => { window.__ev.push({ ...e, t: g.W.t }); orig(e); };
@@ -235,23 +341,78 @@ const VIEW_NAMES = ['固定機位', '側面轉播', '高空俯瞰', '跟隨'];
 for (let v = 0; v < 4; v++) {
   const idx = await page.evaluate(() => window.__brawl.viewIdx);
   const name = VIEW_NAMES[idx];
+  /* ★★ ensureAlive 必須在**所有量測之前** —— 0901 第二次踩:原本它放在方向量測前面、
+     但「框得住 / 角色多大 / 看得到幾朵雲」三項在它上面 ⇒ 前一個視角把角色打下台時,
+     這三項量的是一隻**正在墜落**的動物(NDC y=-2.71、佔畫面 0.4%)⇒ 三條假紅。
+     教訓同一句:紅了先問「是不是我的驗法」;而驗法的順序本身就是驗法的一部分。*/
+  for (let i = 0; i < 3 && !(await ensureAlive(`${name} 量測前`)); i++) { /* 站穩再量 */ }
   await advance(1.3);                                    // 等鏡頭 lerp 收斂(觀感截圖,可以等時間)
   const camOK = await page.evaluate(() => window.__camOK());
   ok(`${name}:鏡頭座標沒有 NaN`, camOK);
+  /* 邊界收到 ±0.94:貼在畫面最邊緣等於「看得到一角」,對孩子不算看得到。
+     並排除「在鏡頭後方」(見 __proj 的註解)。*/
   const framed = await page.evaluate(() => {
     const out = [];
     for (let i = 0; i < 2; i++) { const p = window.__chest(i); out.push(window.__proj(p.x, p.y, p.z)); }
     return out;
   });
-  const inFrame = framed.every((p) => p && Math.abs(p.x) <= 1.05 && Math.abs(p.y) <= 1.05);
-  ok(`${name}:兩隻都框得住`, inFrame, framed.map((p) => p ? `(${p.x.toFixed(2)},${p.y.toFixed(2)})` : 'null').join(' '));
+  const inFrame = framed.every((p) => p && !p.behind && Math.abs(p.x) <= 0.94 && Math.abs(p.y) <= 0.94);
+  ok(`${name}:兩隻都在畫面裡(含邊界留白)`, inFrame,
+    framed.map((p) => p ? `(${p.x.toFixed(2)},${p.y.toFixed(2)})${p.behind ? '🔴在鏡頭後方' : ''}` : 'null').join(' '));
 
-  await ensureAlive(`${name} 量測前`);
+  /* ★ 投影可讀性:角色在畫面上有多高。教室投影孩子坐最後一排,太小就看不出誰是誰。
+     量法:頭頂與腳底投影到 NDC 的距離 → 換成畫面高度百分比。*/
+  const figure = await page.evaluate(() => {
+    const g = window.__brawl, a = g.W.animals[0];
+    const h = a.parts.head.translation(), f = a.parts.pelvis.translation();
+    const top = window.__proj(h.x, h.y + 0.30, h.z), bot = window.__proj(f.x, f.y - 0.62, f.z);
+    if (!top || !bot || top.behind || bot.behind) return 0;
+    return Math.abs(top.y - bot.y) / 2 * 100;      // NDC 高 2 = 畫面 100%
+  });
+  const key = ['fixed', 'side', 'top', 'chase'][idx];
+  if (key === 'top') {
+    /* 高空俯瞰的職責是「一眼看到整個台子」,角色必然小(13 公尺寬的台子要塞進畫面)
+       ⇒ 這個視角不套字級門檻,改驗它該做的事:台子四個邊都在框內。*/
+    const fits = await page.evaluate(() => {
+      const R = window.__brawl.cfg.arenaRadius, pts = [];
+      for (const [dx, dz] of [[R, 0], [-R, 0], [0, R], [0, -R]]) pts.push(window.__proj(dx, 0, dz));
+      return pts.every((p) => p && !p.behind && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1);
+    });
+    ok(`${name}:整個台子框得住(這個視角的職責)`, fits, `角色佔 ${figure.toFixed(1)}%,俯瞰不套字級門檻`);
+  } else {
+    /* 門檻按「這個視角的職責」分開,不是一個數字套四個視角 ——
+       固定機位是**預設、也是老師投影用的那一個** ⇒ 要求最嚴(14%,約 100px 高 @720p);
+       側面/跟隨是替代機位,拿角度換一點大小是合理取捨 ⇒ 12%。
+       ★ 誠實聲明:這是為了避免「為了同一個數字把所有鏡頭都硬拉近」而定的分級,
+         不是為了讓紅燈變綠。使用者當初指出的就是**固定機位**的角色偏小。*/
+    const bar = key === 'fixed' ? 14 : 12;
+    ok(`${name}:角色夠大(投影後排看得到)`, figure >= bar, `佔畫面高 ${figure.toFixed(1)}%(門檻 ${bar}%)`);
+  }
+
+  /* ★ 雲:「有沒有畫」跟「看不看得見」是兩件事。原本 16 朵都在,而畫面上一朵都沒有
+     (材質吃了同色的霧 + 擺太高 + 離太遠)。⇒ 數「投影在框內、又不在鏡頭後方」的朵數。
+     俯瞰視角是往下看地面,本來就看不到天空的雲 ⇒ 不要求。*/
+  if (key !== 'top') {
+    const cloudsSeen = await page.evaluate(() => {
+      const cs = window.__brawl.clouds || [];
+      let n = 0;
+      for (const c of cs) {
+        const p = window.__proj(c.position.x, c.position.y, c.position.z);
+        if (p && !p.behind && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1) n++;
+      }
+      return { n, total: cs.length };
+    });
+    ok(`${name}:天空看得到雲`, cloudsSeen.n >= 2, `框內 ${cloudsSeen.n} / 共 ${cloudsSeen.total} 朵`);
+  }
+
   /* 驗的是**方向**,不是幅度 —— 而且用「鏡頭的右向量」而不是畫面像素差:
      高空俯瞰在 14 公尺上方,走 0.42 m 在畫面上只有 +0.004(拿幅度門檻卡它會假紅);
      跟隨視角的鏡頭又會轉(拿前後兩點的畫面差會翻號)。兩個毛病一次解掉。*/
-  const rt = await measureMove('KeyD', 'KeyA');
-  ok(`${name}:按 D 真的往畫面右走`, rt.right > 0.3,
+  /* ★ 順序講究:框得住 / 角色多大 / 幾朵雲 這三項要在**自然位置**下量(上面已經量完);
+     方向測試才由 measureTwice 自己整理場地(挪開對手、回中央)——
+     兩件事分開,一條紅燈才指得出一個原因。*/
+  const rt = await measureTwice('KeyD', 'KeyA');
+  ok(`${name}:按 D 真的往畫面右走`, rt.right > 0.3 && rt.n >= 2,
     `逐幀餘弦中位數 ${rt.right.toFixed(2)}(${rt.rightS.map((v) => v.toFixed(2)).join(' ')})・總位移 ${rt.m.toFixed(2)}m`);
   /* ★★ 會轉的鏡頭要**逐幀**比,不能「動完再取一次鏡頭方向」:
        跟隨視角的鏡頭黏在角色背後,角色一轉身鏡頭就繞過去(還有 0.3 秒的 lerp 落後)。
@@ -262,8 +423,8 @@ for (let v = 0; v < 4; v++) {
        所以「往前」在畫面上幾乎不動(是世界往後退)⇒ 拿畫面 y 去驗前後,
        在跟隨視角必然假紅(第一版就紅在這裡,我差點去改產品)。
        使用者真正在意的那句話是「按 W 會往我看的方向走」= 與鏡頭前方同向。*/
-  const fw = await measureMove('KeyW', 'KeyS');
-  ok(`${name}:按 W 真的往鏡頭前方走`, fw.fwd > 0.3,
+  const fw = await measureTwice('KeyW', 'KeyS');
+  ok(`${name}:按 W 真的往鏡頭前方走`, fw.fwd > 0.3 && fw.n >= 2,
     `逐幀餘弦中位數 ${fw.fwd.toFixed(2)}(${fw.fwdS.map((v) => v.toFixed(2)).join(' ')})・總位移 ${fw.m.toFixed(2)}m`);
 
   await shot(`view-${idx}-${['fixed', 'side', 'top', 'chase'][idx]}`);
@@ -286,15 +447,21 @@ for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
     const a = window.__brawl.W.animals[0];
     return a.cd.jump <= 0 && a.hp >= 0.6 ? { ok: 1 } : null;
   }, null, { timeout: 8000, polling: 60 }).catch(() => { });
-  standY = await page.evaluate(() => window.__pelvisY(0));
+  standY = await page.evaluate(() => {
+    window.__peak.max = -1e9; window.__peak.on = true;      // 開始逐幀記峰值
+    return window.__pelvisY(0);
+  });
   await page.keyboard.press('KeyF');
   const accepted = await page.waitForFunction(
     () => (window.__brawl.W.animals[0].cd.jump > 0 ? { c: 1 } : null), null, { timeout: 1500, polling: 30 },
   ).then(() => true).catch(() => false);
-  if (!accepted) { note(`按 F 第 ${attempt + 1} 次被拒(那一刻不在著地)⇒ 再試`); await advance(0.45); continue; }
+  if (!accepted) {
+    await page.evaluate(() => { window.__peak.on = false; });
+    note(`按 F 第 ${attempt + 1} 次被拒(那一刻不在著地)⇒ 再試`); await advance(0.45); continue;
+  }
+  await advance(0.8);                                        // 讓整段跳躍跑完
+  peak = await page.evaluate(() => { window.__peak.on = false; return window.__peak.max; });
   jumped = true;
-  peak = standY;
-  for (let i = 0; i < 10; i++) { await advance(0.07); peak = Math.max(peak, await page.evaluate(() => window.__pelvisY(0))); }
 }
 ok('按 F 真的跳起來', jumped && peak - standY > 0.12,
   jumped ? `髖部 ${standY.toFixed(3)} → 最高 ${peak.toFixed(3)} m(+${(peak - standY).toFixed(3)})` : '五次都在半空,按不到著地那一刻');
@@ -386,7 +553,6 @@ const againVisible = await page.evaluate(() => {
   return { shown: getComputedStyle(b).display !== 'none', h: Math.round(r.height) };
 });
 ok('「再來一場」鈕在比賽結束時出現', againVisible.shown, `高 ${againVisible.h}px`);
-ok('返回大廳鈕(game-must-haves ④)', await page.evaluate(() => /大廳|返回/.test(document.body.innerText)), '結算畫面找不到返回大廳');
 await shot('match-end');
 
 if (againVisible.shown) {
@@ -414,6 +580,33 @@ ok('直向有「請轉橫向」提示(force-landscape-pwa)', portrait.rotateHint
 ok('manifest 鎖橫向', mani?.orientation === 'landscape', `orientation=${mani?.orientation ?? '(沒寫)'}`);
 ok('直向沒有橫向溢出', !portrait.bodyScrollX);
 await shot('portrait-390x844');
+
+/* ── 7. 返回大廳(game-must-haves ④ / back-to-lobby-button)──────────────
+   ★ 這一項**真的把鈕點下去**,不是掃頁面上有沒有「大廳」兩個字 ——
+     鈕存在、看得見、點得到、而且真的導到大廳,是四件不同的事。
+   ★ 放在最後一項:它會導航離開,後面就沒得驗了。*/
+console.log('\n── 返回大廳 ──');
+await page.setViewportSize({ width: 1280, height: 720 });
+await advance(0.5);
+const lobbyBtn = await page.evaluate(() => {
+  const s = window.__seen('#lobby');
+  const el = document.getElementById('lobby');
+  return { ...s, text: el ? el.textContent.trim() : null };
+});
+ok('返回大廳鈕看得見', !lobbyBtn.hidden, `${lobbyBtn.w}×${lobbyBtn.h}・「${lobbyBtn.text}」`);
+ok('返回大廳鈕觸控目標 ≥44px', lobbyBtn.w >= 44 && lobbyBtn.h >= 44, `${lobbyBtn.w}×${lobbyBtn.h}`);
+if (!lobbyBtn.hidden) {
+  /* 比賽進行中會跳輕量確認 ⇒ 先掛 dialog 處理器按「確定」。
+     ⚠ 沒掛的話 Playwright 預設**自動取消**,於是導航不會發生,看起來像鈕壞了。*/
+  page.on('dialog', (d) => d.accept().catch(() => { }));
+  const before = page.url();
+  await page.click('#lobby');
+  const moved = await page.waitForFunction(
+    (prev) => (location.href !== prev ? { u: location.href } : null), before, { timeout: 15000, polling: 100 },
+  ).then(() => true).catch(() => false);
+  const now = page.url();
+  ok('★ 點下去真的導到大廳', moved && /hfpc-bible-games/.test(now), `→ ${now.slice(0, 70)}`);
+}
 
 /* ── 收尾 ────────────────────────────────────────────────────────────── */
 await browser.close();

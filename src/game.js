@@ -250,12 +250,38 @@ export class Game {
     sun.shadow.mapSize.set(1024, 1024);
     const d = 9; Object.assign(sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 40 });
     s.add(sun);
-    // 幾朵雲當背景(浮空台子要有天空感,不然像在真空裡打架)
-    for (let i = 0; i < 14; i++) {
-      const c = new THREE.Mesh(new THREE.SphereGeometry(1.1 + Math.random() * 1.4, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 }));
-      c.position.set((Math.random() - 0.5) * 60, 7 + Math.random() * 12, (Math.random() - 0.5) * 60);
-      c.scale.y = 0.55; s.add(c);
+    /* 幾朵雲當背景(浮空台子要有天空感,不然像在真空裡打架)
+       ⚠⚠ 0901 修:原本「有畫,但畫面上一朵都看不到」,三個原因疊起來 ——
+         ① 材質吃霧,而 `fog` 的顏色**跟天空同色**(0x8fd3f4)、遠端只有 46
+            ⇒ 擺在 ±30 的雲幾乎完全被霧化成天空,等於隱形。⇒ 這一層明確 `fog: false`。
+         ② 高度擺到 y=7~19,而鏡頭是俯角往下看 ⇒ 大半在畫面外。⇒ 壓到 4.5~11。
+         ③ 隨機散在 ±30 的方塊裡,離台子太遠、又可能全落在鏡頭背後。
+            ⇒ 改成**環狀**分佈(半徑 15~27),繞著台子一圈,任何視角都會有幾朵在框裡。
+       ★ 而且要留參照:this.clouds 讓驗收腳本能數「畫面裡看得到幾朵」——
+         「有沒有畫」跟「看不看得見」是兩件事,只有後者算數。*/
+    this.clouds = [];
+    for (let i = 0; i < 16; i++) {
+      const c = new THREE.Mesh(new THREE.SphereGeometry(1.3 + Math.random() * 1.5, 9, 7),
+        new THREE.MeshBasicMaterial({ color: 0xfdfdff, transparent: true, opacity: 0.92, fog: false }));
+      const ang = (i / 16) * Math.PI * 2 + Math.random() * 0.35;
+      const rad = 15 + Math.random() * 12;
+      /* ★ 大部分的雲擺在**台子下方**(y −9~−3),少數留在上方(y 2~7)。
+         理由是幾何而不是美感:鏡頭是俯角往下看的,兩隻靠近時俯角約 44°、
+         畫面上緣只到「水平線下 18°」⇒ **天空完全不在畫面裡**,擺在頭頂的雲一朵都看不到
+         (0901 兩次改完都還是 0 朵,診斷過才看清楚:aboveTop 6 朵、behind 6 朵)。
+         擺在下方的雲落在俯角 25~60°,四個視角都在框內 ——
+         而且「浮空台子看得到腳下的雲」本身就對,高度感正是這樣來的。
+         上方那幾朵留給側面轉播(那個機位俯角淺,看得到天空)。*/
+      const low = i < 11;
+      c.position.set(Math.sin(ang) * rad, low ? -9 + Math.random() * 6 : 2 + Math.random() * 5, Math.cos(ang) * rad);
+      c.scale.set(1.5, 0.5, 1);
+      s.add(c); this.clouds.push(c);
+      /* 每朵配一顆小的疊在旁邊,才像雲不像球 */
+      const c2 = new THREE.Mesh(new THREE.SphereGeometry(0.9 + Math.random(), 8, 6), c.material);
+      c2.position.copy(c.position);
+      c2.position.x += (Math.random() - 0.5) * 3.2; c2.position.y -= 0.35;
+      c2.scale.set(1.3, 0.5, 1);
+      s.add(c2); this.clouds.push(c2);
     }
   }
 
@@ -428,26 +454,67 @@ export class Game {
     if (view === 'fixed') {
       /* 固定機位:方向是常數,只跟著人平移 ⇒ 畫面永遠不旋轉。
          ★ 高度與距離跟著「兩隻分得多開」微調,兩個人跑到對角時才框得住,
-           但**方向不變** —— 會變的只有位置,那不會讓人頭暈。*/
+           但**方向不變** —— 會變的只有位置,那不會讓人頭暈。
+         ⚠⚠ 0901 修構圖:原本 back=7.0/up=4.2 ⇒ 角色只佔畫面高 ~13%,
+            而畫面上緣有一大片空天空。教室投影時坐後排的孩子分不出誰是誰。
+            ⇒ ① 基礎距離拉近(7.0→5.0),角色變大;
+               ② 俯角加大(up 4.2→4.8),地平線往上推 ⇒ 空天空變少;
+               ③ 看的點從「胸口」下移到胸口與台面之間(*0.45),
+                  角色因此坐在畫面中央略上,下方是台子而不是天空。
+            ④ 分開時仍然拉遠(係數 1.15→1.35),不然兩隻跑開就框不住。*/
       let spread = 0;
       for (const a of A) {
         if (a.fellAt != null) continue;
         const t = a.parts.chest.translation();
         spread = Math.max(spread, Math.hypot(t.x - c.x, t.z - c.z));
       }
-      const back = 7.0 + spread * 1.15, up = 4.2 + spread * 0.5;
+      const back = 5.0 + spread * 1.35, up = 4.8 + spread * 0.62;
       pos = new THREE.Vector3(c.x, c.y + up, c.z + back);
+      look = new THREE.Vector3(c.x, c.y * 0.45, c.z);
     } else if (view === 'chase') {
+      /* 跟隨:鏡頭在一號背後。
+         ⚠⚠ 0901 修:原本 6.2 遠 / 3.4 高 ⇒ 太低太近,台面佔掉畫面下 3/4,
+            而**對手常常不在畫面裡** —— 四個視角裡對孩子最沒用的一個。
+            ⇒ 拉高拉遠,而且跟著「兩隻分得多開」一起退,對手才留在框內;
+              看的點也略微抬高(不是看腳底),地平線才不會壓在畫面正中。*/
       const me = A[0];
       const f = me ? me.facing : 0;
-      pos = new THREE.Vector3(c.x - Math.sin(f) * 6.2, c.y + 3.4, c.z - Math.cos(f) * 6.2);
+      let spread = 0;
+      for (const a of A) {
+        if (a.fellAt != null) continue;
+        const t = a.parts.chest.translation();
+        spread = Math.max(spread, Math.hypot(t.x - c.x, t.z - c.z));
+      }
+      /* 距離/高度:0901 兩次調整後定案。7.8+spread*1.15 兩隻分開時角色只剩畫面高 10%,
+         6.4+spread*0.78 量到 13~15% 而對手仍在框內(驗收兩條同時綠才算對)。*/
+      const dist = 6.4 + spread * 0.78, up = 4.4 + spread * 0.38;
+      pos = new THREE.Vector3(c.x - Math.sin(f) * dist, c.y + up, c.z - Math.cos(f) * dist);
+      look = new THREE.Vector3(c.x, c.y * 0.7, c.z);
     } else if (view === 'side') {
-      pos = new THREE.Vector3(R + 5.5, 4.2, 0);
+      /* 側面轉播:固定在場邊的機位。
+         ⚠ 0901 修:原本 R+5.5 遠 ⇒ 角色只佔畫面高 13.6%,投影後排看不清。
+           拉近到 R+3.4,並跟著「兩隻分得多開」退,分開時才不會有人出框。*/
+      let spread = 0;
+      for (const a of A) {
+        if (a.fellAt != null) continue;
+        const t = a.parts.chest.translation();
+        spread = Math.max(spread, Math.hypot(t.x - c.x, t.z - c.z));
+      }
+      pos = new THREE.Vector3(R + 2.4 + spread * 0.7, 3.5 + spread * 0.3, 0);
+      look = new THREE.Vector3(c.x, c.y * 0.6, c.z);
     } else {   // top
       /* ⚠ 正上方視角:視線與 up=(0,1,0) 平行 = 退化,lookAt 的 roll 變隨機
          (3d-game-kit 實錄:畫面斜斜的,而且每次進來斜的角度還不一樣)。
-         ⇒ 這個視角把 up 明確定成場地軸,並且 up 也走同一支 lerp,切視角才不甩頭。*/
-      pos = new THREE.Vector3(c.x, 14, c.z + 0.001);
+         ⇒ 這個視角把 up 明確定成場地軸,並且 up 也走同一支 lerp,切視角才不甩頭。
+         ⚠⚠ 0901 修:原本鏡頭**跟著玩家平移**(c.x/c.z)+ 固定高度 14。
+            這個視角的職責是「一眼看到整個台子」,而跟著玩家跑正好會把遠端台緣推出畫面
+            (玩家偏離中心 1.5 m,遠邊就到 8.0 m > 半視高 6.83 ⇒ 出框)。
+            ⇒ 改成**固定在場地中心正上方**,高度由台子半徑與實際視角算出來(留 14% 邊)。
+              順帶好處:畫面完全不飄,俯瞰本來就該是穩的。*/
+      const half = THREE.MathUtils.degToRad(this.camera.fov) / 2;
+      const need = R / Math.tan(half) * 1.14;
+      pos = new THREE.Vector3(0, Math.max(9, need), 0.001);
+      look = new THREE.Vector3(0, 0, 0);
       up = new THREE.Vector3(0, 0, -1);
     }
     const k = 1 - Math.exp(-dt * 3.2);

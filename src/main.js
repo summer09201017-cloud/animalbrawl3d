@@ -9,8 +9,10 @@ const audio = new Audio();
 /* ⑦ 版本號 + 新增功能簡歷(game-must-haves):選單上看得到「這是第幾版、這一版多了什麼」。
    老師/使用者才分得出手上的是不是新版,回報問題時也講得出版本。
    ★ 改了會上線的東西 ⇒ 這兩行與 public/sw.js 的 CACHE **一起** bump。*/
-const VER = 'v1.1';
-const VER_NOTES = '物理布娃娃互推・四種動物・四視角・同機兩人或對電腦｜v1.1:修好 HUD 與「再來一場」不顯示';
+const VER = 'v1.2';
+const VER_NOTES = '物理布娃娃互推・四種動物・四視角・同機兩人或對電腦'
+  + '｜v1.1:修好 HUD 與「再來一場」不顯示'
+  + '｜v1.2:返回大廳鈕・角色放大看得清・天空看得到雲・俯瞰固定在場地中心';
 let game = null, raf = 0, last = 0;
 
 /* ── 鍵盤配置(同機兩人)。★ 3d-game-kit §3「量值可調」:鍵位也印在畫面上,
@@ -182,6 +184,19 @@ function bindTouch() {
 
 
 $('again').onclick = () => game && game.restart();
+
+/* ── 返回大廳(back-to-lobby-button)───────────────────────────────────────
+   ★ 退出 ≠ 過關:這條路徑完全不碰 onEvent/onComplete,不計分、不點亮大廳卡。
+   ★ 比賽進行中才輕量確認(標題與結算畫面免確認,直接走)。
+   ★ 先離開全螢幕再導頁 —— PWA 全螢幕下直接導頁會把使用者留在全螢幕的大廳裡。 */
+const LOBBY_URL = 'https://hfpc-bible-games.summer09201017.workers.dev/';
+$('lobby').onclick = () => {
+  const playing = game && game.state === 'fight';
+  if (playing && !confirm('離開這一關?這一場的比分不會保留。')) return;
+  document.exitFullscreen?.().catch(() => { });
+  location.href = LOBBY_URL;
+};
+
 buildMenu();
 bindTouch();
 
