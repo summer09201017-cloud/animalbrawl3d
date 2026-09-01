@@ -114,5 +114,42 @@
 <div id="rotate"><div class="big"><span class="em">📱↻</span>請把手機轉成<u>橫向</u>再玩
   <span class="sub">橫的畫面才看得到整個台子與兩隻動物</span></div></div>
 <script type="module" src="./src/main.js"></script>
+<script>
+/* ── play-stats 三層匿名打點(game-must-haves ⑤)────────────────────────────
+   零個資:沒有 cookie、不存 IP、沒有帳號,離線時靜默跳過、不影響遊戲。
+   ★ 雙平台寫法:**只擋 localhost**,其餘一律計數(pages.dev / 自訂網域 / 舊平台都算)。
+     ⚠ 不可以改成「白名單某一個平台的網域才發送」——
+       那是艦隊搬到 CF 之後「統計無聲斷流」的頭號雷(要隔天看 /stats 才發現),
+       全域 hook cf-deploy-guard 會直接擋下那種寫法的部署。詳見 skill play-stats-lite。*/
+window.psPing = function (key, t) {
+  try {
+    if (['localhost', '127.0.0.1'].includes(location.hostname)) return;
+    var u = 'https://hfpc-play-stats.summer09201017.workers.dev/api/ping?g=' + key + (t ? '&t=' + t : '');
+    if (navigator.sendBeacon) navigator.sendBeacon(u); else fetch(u, { mode: 'no-cors' });
+  } catch (_) { }
+};
+/* ① 開啟次數(同一台 10 分鐘內只算一次,重整不灌水)*/
+try {
+  var psK = 'ps-last-animalbrawl3d';
+  var psLast = parseInt(localStorage.getItem(psK) || '0', 10);
+  if (Date.now() - psLast > 600000) { localStorage.setItem(psK, String(Date.now())); window.psPing('animalbrawl3d'); }
+} catch (_) { window.psPing('animalbrawl3d'); }
+/* ③ 真實停留:開頁 → 第一次離開,回報一發 -dwell 帶秒數。
+   開啟次數只看「被點幾次」,停留時間才看得出「孩子真的待多久、抓不抓得住人」。
+   ★ 只送這一發:手機鎖屏時常只送得出佇列第一個 beacon,同一刻連發兩個會有一發被丟掉。*/
+(function () {
+  var _dwT0 = Date.now(), _dwSent = false;
+  function _dwLeave() {
+    if (_dwSent) return; _dwSent = true;
+    var sec = Math.round((Date.now() - _dwT0) / 1000);
+    if (sec < 3 || sec > 1800) return;      // 誤觸不算、掛整天的背景分頁也不算
+    window.psPing('animalbrawl3d-dwell', sec);
+  }
+  addEventListener('pagehide', _dwLeave);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') _dwLeave();
+  });
+})();
+</script>
 </body>
 </html>

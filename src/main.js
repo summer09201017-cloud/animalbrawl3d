@@ -9,10 +9,10 @@ const audio = new Audio();
 /* ⑦ 版本號 + 新增功能簡歷(game-must-haves):選單上看得到「這是第幾版、這一版多了什麼」。
    老師/使用者才分得出手上的是不是新版,回報問題時也講得出版本。
    ★ 改了會上線的東西 ⇒ 這兩行與 public/sw.js 的 CACHE **一起** bump。*/
-const VER = 'v1.2';
+const VER = 'v1.3';
 const VER_NOTES = '物理布娃娃互推・四種動物・四視角・同機兩人或對電腦'
   + '｜v1.1:修好 HUD 與「再來一場」不顯示'
-  + '｜v1.2:返回大廳鈕・角色放大看得清・天空看得到雲・俯瞰固定在場地中心';
+  + '｜v1.2:返回大廳鈕・角色放大看得清・天空看得到雲・俯瞰固定在場地中心｜v1.3:接上使用統計';
 let game = null, raf = 0, last = 0;
 
 /* ── 鍵盤配置(同機兩人)。★ 3d-game-kit §3「量值可調」:鍵位也印在畫面上,
@@ -96,7 +96,12 @@ async function start(cfg) {
       else if (e.type === 'grab') audio.grab();
       else if (e.type === 'throw') audio.throwIt();
       else if (e.type === 'fall') { audio.fall(); setTimeout(() => audio.point(), 400); }
-      else if (e.type === 'matchEnd') setTimeout(() => audio.win(), 500);
+      else if (e.type === 'matchEnd') {
+        setTimeout(() => audio.win(), 500);
+        /* ② 完賽打點:分母是「開啟次數」,這一發是分子 —— 兩個一起看才知道
+           「打開的人有多少真的打完一場」。psPing 由 index.html 定義,離線時它自己靜默。*/
+        window.psPing?.('animalbrawl3d-done');
+      }
     },
   });
   await game.init(cfg);
